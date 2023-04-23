@@ -184,4 +184,4 @@ filter expression. The example `Makefile` shows how to use it.
 
  * **2023-03-20** initial script-based version
  * **2023-04-23** transition from scripts to central Makefile
- * **2023-04-xx** initial commit
+ * **2023-04-24** initial commit
