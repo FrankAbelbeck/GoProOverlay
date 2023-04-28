@@ -29,6 +29,9 @@ import argparse
 import json
 import shlex
 import math
+import re
+import statistics
+import functools
 
 # external dependencies
 try:
@@ -252,6 +255,21 @@ Telemetry data is expected to be of the following form:
 }
 """
 	
+	MAP_STATISTICS_METHOD = {
+		"median": statistics.median,
+		"mean": statistics.mean,
+		"gmean": statistics.geometric_mean,
+		"hmean": statistics.harmonic_mean,
+		"mode": statistics.mode,
+		"multimodemax": lambda x: max(statistics.multimode(x)),
+		"multimodemin": lambda x: min(statistics.multimode(x)),
+		"multimodemean": lambda x: statistic.mean(statistics.multimode(x)),
+		"multimodemedian": lambda x: statistics.median(statistics.multimode(x)),
+		None: statistics.median
+	}
+	
+	RE_OFFSET = re.compile(r'''(.+?)=(.+?):([0-9]*)-([0-9]*)(:(.+?))?''')
+	
 	def __init__(self, fJSON, fltFps, intNumFrames):
 		"""Constructor: initialise instance.
 
@@ -269,6 +287,10 @@ Raises:
 		self._lstIdxFrameRow = []
 		self.load(fJSON,fltFps,intNumFrames)
 	
+	@classmethod
+	def statisticsMethods(cls):
+		return [k for k in cls.MAP_STATISTICS_METHOD.keys() if k is not None]
+	
 	def load(self, fJSON, fltFps, intNumFrames):
 		"""Load telemetry data from given JSON file.
 
@@ -280,6 +302,8 @@ Args:
 Raises:
    json.JSONDecodeError: invalid JSON input.
 """
+		self._lstOffsets = {}
+		
 		# load JSON data structure and create a mapping heading -> column index
 		self._dctTele = json.load(fJSON)
 		self._dctHeadings = {strKey:intIdx for intIdx,strKey in enumerate(self._dctTele["headings"])}
@@ -299,6 +323,8 @@ Raises:
 				fltTimestampRow = self._dctTele["rows"][intIdxRow][intIdxTimestamp]
 				fltDurationRow = self._dctTele["rows"][intIdxRow][intIdxDuration]
 			self._lstIdxFrameRow.append( (intIdxRow, (fltTimestamp - fltTimestampRow) / fltDurationRow) )
+		# create timestamp vector for quick offset look-up
+		self._lstTimestamps = [(lstRow[intIdxTimestamp],lstRow[intIdxDuration]) for lstRow in self._dctTele["rows"]]
 	
 	def get(self,intIdxFrame):
 		"""Get telemetry data of the current frame and advance the internal pointers.
@@ -319,14 +345,80 @@ Returns:
 				dctReturn[self._dctTele["headings"][intIdxCol]] = value
 		return dctReturn
 	
-	def getStatistics(self):
-		"""Get a multi-line string with statistics (number of entries, first timestamp).
-
-Returns:
-   A string.
-"""
-		return f"""number of entries: {len(self._dctTele["rows"])}
-first timestamp:   {self._dctTele["rows"][0][self._dctHeadings["Timestamp"]]}"""
+	def addOffset(self,strOffset):
+		#
+		# parse strValue K=V:T0-T1:M
+		#
+		try:
+			strKey,strValue,strT0,strT1,strMethodAll,strMethod = self.RE_OFFSET.fullmatch(strOffset).groups()
+		except re.error as e:
+			raise ValueError(f"argument parsing failed: {e}")
+		
+		try:
+			intIdxKey = self._dctHeadings[strKey]
+		except KeyError:
+			raise ValueError("unknonw column name")
+		
+		try:
+			fltValue = float(strValue)
+		except (TypeError,ValueError) as e:
+			raise ValueError(f"converting value failed: {e}")
+		
+		if strT0:
+			try:
+				fltT0 = float(strT0)
+			except (TypeError,ValueError) as e:
+				raise ValueError(f"converting timestamp 0 failed: {e}")
+		else:
+			fltT0 = float("-infinity")
+		
+		if strT1:
+			try:
+				fltT1 = float(strT1)
+			except (TypeError,ValueError) as e:
+				raise ValueError(f"converting timestamp 1 failed: {e}")
+		else:
+			fltT1 = float("+infinity")
+		
+		if fltT0 > fltT1:
+			fltT0,fltT1 = fltT1,FltT0
+		
+		try:
+			funMethod = self.MAP_STATISTICS_METHOD[strMethod]
+		except KeyError:
+			raise ValueError("invalid method")
+		
+		# iterate over rows, collect values for given timeframe,
+		# determine central tendency, calculate offset, apply offset to all values
+		lstValues = []
+		for intIdx,(fltT,fltD) in enumerate(self._lstTimestamps):
+			if fltT >= fltT0 and fltT < fltT1 + fltD:
+				try:
+					# assume vector value...
+					lstValues.extend([v for v in self._dctTele["rows"][intIdx][intIdxKey] if v is not None])
+				except TypeError:
+					# just append if not iterable
+					if self._dctTele["rows"][intIdx][intIdxKey] is not None:
+						lstValues.append(self._dctTele["rows"][intIdx][intIdxKey])
+		
+		fltOffset = fltValue - funMethod(lstValues)
+		print(f"applying offset {fltOffset} to column '{strKey}'")
+		
+		# apply offset to all values
+		for lstRow in self._dctTele["rows"]:
+			try:
+				# assume vector value...
+				for intIdxVal,fltVal in enumerate(lstRow[intIdxKey]):
+					try:
+						lstRow[intIdxKey][intIdxVal] = lstRow[intIdxKey][intIdxVal] + fltOffset
+					except TypeError:
+						pass # ignore None
+			except TypeError:
+				# ...just add offset
+				try:
+					lstRow[intIdxKey] = lstRow[intIdxKey] + fltOffset
+				except TypeError:
+					pass # ignore None
 
 
 if __name__ == "__main__":
@@ -358,7 +450,7 @@ if __name__ == "__main__":
 		default="copy"
 	)
 	parser.add_argument("--params",
-		help="Additional ffmpeg parameters, e.g. for the video and/or audio codec or to invoke a filter; specified as a command line string fragment; default: -preset slow -crf 28 -tune film",
+		help='Additional ffmpeg parameters, e.g. for the video and/or audio codec or to invoke a filter; specified as a command line string fragment; default: "-preset slow -crf 28 -tune film"',
 		default="-preset slow -crf 28 -tune film"
 	)
 	parser.add_argument("--tqs",
@@ -371,8 +463,19 @@ if __name__ == "__main__":
 		type=int,
 		default=5
 	)
+	parser.add_argument("--offset",
+		metavar="K=V:T0-T1:M",
+		help="Calculate offset of all values of column named K in given timeframe T0 to T1 (given in seconds) from expected value V. "
+			"Use the method M (default: median) to get obtain the central tendency of all measured values. "
+			"If T0 is empty, the minimal timestamp is used. "
+			"If T1 is empty, the maximal timestamp is used. "
+			"Valid statistics methods: " + ", ".join(Telemetry.statisticsMethods()),
+		action="append",
+		default=[]
+	)
 	args = parser.parse_args()
 	
+	print(f"""Setting up video/audio reader for file {args.VIDEO}...""")
 	# open MP4 reader
 	readerMp4 = imageio_ffmpeg.read_frames(
 		args.VIDEO
@@ -393,25 +496,26 @@ if __name__ == "__main__":
 	fltFps = meta["fps"]
 	intNumFrames = int(meta["duration"] * fltFps)
 	
+	print(f"""
+   size:   {'⨯'.join([str(i) for i in tplSize])}
+   fps:    {fltFps}
+   frames: {intNumFrames}
+
+Parsing overlay file {args.OVERLAY.name} and telemetry file {args.TELEMETRY.name}...""")
+	
 	# parse overlay definition JSON file
 	ovr = Overlay(args.OVERLAY)
-	# parse telemetry file
+	
+	# parse telemetry file and process offset arguments
 	tele = Telemetry(args.TELEMETRY,fltFps,intNumFrames)
-	print(f"""
-Adding overlay to {args.VIDEO}, using audio from {args.AUDIO}
-
-Telemetry Information for {args.TELEMETRY.name}
-{tele.getStatistics()}
-""")
+	for strOffset in args.offset:
+		try:
+			tele.addOffset(strOffset)
+		except ValueError as e:
+			print(f"ignoring invalid argument '--offset {strOffset}' ({e})",file=sys.stderr)
 	
 	print(f"""
-Setting up video/audio writer for file {args.OUTPUT}...
-
-audio codec: {args.acodec}
-video codec: {args.vcodec}
-framerate:   {fltFps}
-parameters:  {args.params}
-""")
+Setting up video/audio writer for file {args.OUTPUT}...""")
 	writerMp4 = imageio_ffmpeg.write_frames(
 		args.OUTPUT,
 		tplSize,
@@ -425,6 +529,12 @@ parameters:  {args.params}
 	)
 	# seed the writer generator
 	writerMp4.send(None)
+	
+	print(f"""
+   audio codec: {args.acodec}
+   video codec: {args.vcodec}
+   parameters:  {args.params}
+	""")
 	
 	intFrame = 0
 	intFramesRemaining = intNumFrames

@@ -49,7 +49,6 @@ HEADINGS = (
 )
 MAP_HEADINGS_IDX = {key:i for i,key in enumerate(HEADINGS)}
 
-
 def batched(iterable,n):
 	"""Generator: take n items from iterable and yield them as n-tuple.
 
@@ -101,14 +100,17 @@ Returns:
 
 if __name__ == "__main__":
 	# initialise argument parser and parse arguments
-	parser = argparse.ArgumentParser(description="Read GoPro telemetry JSON data (as extracted by exiftool) from stdin, and write revised JSON data to stdout.")
+	parser = argparse.ArgumentParser(
+		description="Read GoPro telemetry JSON data (as extracted by exiftool) from stdin, and write revised JSON data to stdout.",
+		epilog="Column headings: " + ", ".join(HEADINGS)
+	)
 	parser.add_argument("--version", action="version", version="20230416")
 	parser.add_argument("--samples",
-		help="Number of sampling points per entry for any multi-valued data (e.g. Accelerometer; default: number of frames per second)",
+		help="Set number of sampling points per entry for any multi-valued data (e.g. Accelerometer; default: number of frames per second)",
 		type=int
 	)
 	parser.add_argument("--init",
-		help="JSON string describing a row of initial values (in case any values accumulate over time, e.g. distance)",
+		help="JSON string describing a dictionary of initial values (in case any values accumulate over time, e.g. distance)",
 		default=None
 	)
 	parser.add_argument("FILE",
@@ -116,8 +118,20 @@ if __name__ == "__main__":
 		type=argparse.FileType('w')
 	)
 	parser.add_argument("--lastrow",
-		help="After converting, print a JSON representation of the values of the last row (usable as input for the --init argument)",
-		action="store_true"
+		help="After converting, print a JSON dictionary of values of the keys given in LASTROW. "
+			"LASTROW is parsed as a comma-separated key string list. The special key 'all' will select all values. "
+			"Unknown fields will be silently ignored."
+	)
+	parser.add_argument("--hdop",
+		help="Set the maximum horizontal dilution of precision (HDOP) value for which GPS data is accepted. Default: 10. "
+			"Excellent: 1-2; good: 2-5; moderate: 5-10; fair: 10-20; poor: 20+",
+		type=float,
+		default=10.0
+	)
+	parser.add_argument("--minspeed",
+		help="Set the minimum GPS speed (3D, metres/second) that has to be reached to do calculations on true course and rate of descend. Default: 1. ",
+		type=float,
+		default=1.0
 	)
 	args = parser.parse_args()
 	
@@ -132,10 +146,14 @@ if __name__ == "__main__":
 	# parse initial value vector, extract distance initial value
 	lstRowInit = [None]*len(HEADINGS)
 	try:
-		for i,value in enumerate(json.loads(args.init)):
-			lstRowInit[i] = value
-	except (TypeError,json.decoder.JSONDecodeError):
-		pass # ignore errors of init JSON structure; might be whitespace due to missing INIT data
+		for key,value in json.loads(args.init).items():
+			lstRowInit[MAP_HEADINGS_IDX[key]] = value
+	except (json.decoder.JSONDecodeError,AttributeError) as e:
+		# ignore errors of init JSON structure; might be whitespace due to missing INIT data
+		print(f"ignoring invalid init data {args.init} ({e})",file=sys.stderr)
+	except TypeError:
+		# most likely: args.init is None; nevermind
+		pass
 	try:
 		fltDistance = float(lstRowInit[MAP_HEADINGS_IDX["Distance"]])
 	except (TypeError,ValueError):
@@ -176,14 +194,16 @@ if __name__ == "__main__":
 			lstRow[MAP_HEADINGS_IDX["GyroscopeY"]] = [v[1] for v in lstFltGyro]
 			lstRow[MAP_HEADINGS_IDX["GyroscopeZ"]] = [v[2] for v in lstFltGyro]
 			
-			# create framerate-mapped GPS tuples (lat,lon,alt,speed,speed3d)
-			lstRow[MAP_HEADINGS_IDX["Latitude"]] = float(dctIn[strDoc+"GPSLatitude"])
-			lstRow[MAP_HEADINGS_IDX["Longitude"]] = float(dctIn[strDoc+"GPSLongitude"])
-			lstRow[MAP_HEADINGS_IDX["Altitude"]] = float(dctIn[strDoc+"GPSAltitude"])
+			fltHDOP = float(dctIn[strDoc+"GPSHPositioningError"])
+			lstRow[MAP_HEADINGS_IDX["HorizontalError"]] = fltHDOP
+			if fltHDOP <= args.hdop:
+				lstRow[MAP_HEADINGS_IDX["Latitude"]] = float(dctIn[strDoc+"GPSLatitude"])
+				lstRow[MAP_HEADINGS_IDX["Longitude"]] = float(dctIn[strDoc+"GPSLongitude"])
+				lstRow[MAP_HEADINGS_IDX["Altitude"]] = float(dctIn[strDoc+"GPSAltitude"])
+				lstRow[MAP_HEADINGS_IDX["GPSSpeed2D"]] = float(dctIn[strDoc+"GPSSpeed"])
+				lstRow[MAP_HEADINGS_IDX["GPSSpeed3D"]] = float(dctIn[strDoc+"GPSSpeed3D"])
 			
-			# get GPS speeds and temperature [°C]
-			lstRow[MAP_HEADINGS_IDX["GPSSpeed2D"]] = float(dctIn[strDoc+"GPSSpeed"])
-			lstRow[MAP_HEADINGS_IDX["GPSSpeed3D"]] = float(dctIn[strDoc+"GPSSpeed3D"])
+			# get camera temperature [°C]
 			lstRow[MAP_HEADINGS_IDX["Temperature"]] = float(dctIn[strDoc+"CameraTemperature"])
 			
 			# get timestamp; assume GPS time is zulu time: parse date and replace timezone
@@ -192,7 +212,6 @@ if __name__ == "__main__":
 			# and let strptime %z sort it out
 			lstRow[MAP_HEADINGS_IDX["TimeGPS"]] = datetime.datetime.strptime(dctIn[strDoc+"GPSDateTime"]+"Z","%Y:%m:%d %H:%M:%S.%f%z",).timestamp()
 			
-			lstRow[MAP_HEADINGS_IDX["HorizontalError"]] = float(dctIn[strDoc+"GPSHPositioningError"])
 			lstRow[MAP_HEADINGS_IDX["Distance"]] = fltDistance
 		except KeyError as e:
 			pass # invalid input (incomplete last entry?)
@@ -205,14 +224,15 @@ if __name__ == "__main__":
 				dctOut["rows"] = [lstRow]
 				lstRowPrev = lstRowInit
 			
-			# second+ row: calculate from previous row
+			# calculate values from previous row
 			#  - distance: previous speed * previous duration = current distance
 			#  - true course: current coords - previous coords -> previous and current TC
 			#  - variometer: current coords - previous coords ->  previous and current Vario
-			if lstRow[MAP_HEADINGS_IDX["HorizontalError"]] < lstRow[MAP_HEADINGS_IDX["GPSSpeed2D"]]:
-				#
-				# only do calculations if GPS speed is greater than GPS precision
-				#
+			#
+			# since GPS coords are used for these calculations, only do this
+			# if horizontal dilution of precision is good enough (see --hdop arg)
+			# and the speed is greater than the set threshold
+			if fltHDOP <= args.hdop and lstRow[MAP_HEADINGS_IDX["GPSSpeed3D"]] >= args.minspeed:
 				try:
 					fltDistance = fltDistance + lstRowPrev[MAP_HEADINGS_IDX["GPSSpeed2D"]] * lstRowPrev[MAP_HEADINGS_IDX["Duration"]]
 				except (TypeError,ValueError):
@@ -266,13 +286,21 @@ if __name__ == "__main__":
 					lstMax[i] = max(valMax,valCurrMax)
 			dctOut["min"] = lstMin
 			dctOut["max"] = lstMax
-		
+			
 		# move on
 		intIdx = intIdx + 1
 	
 	# write JSON data to file
 	json.dump(dctOut,args.FILE)
 	
-	# write last row as JSON to stdout
-	if args.lastrow:
-		print( json.dumps( dctOut["rows"][-1]) )
+	# write last row as JSON dictionary to stdout
+	# only print the keys passed via lastrow
+	lstKeys = []
+	for strKey in str(args.lastrow).split(","):
+		if strKey == "all":
+			lstKeys = HEADINGS
+			break
+		elif strKey in HEADINGS:
+			lstKeys.append(strKey)
+	if lstKeys:
+		print( json.dumps( { strKey:dctOut["row"][-1][MAP_HEADINGS_IDX[strKey]] for strKey in lstKeys } ) )

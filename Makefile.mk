@@ -76,7 +76,6 @@ MISSING += $(call funCheckExternal,$(shell $(GPSBABEL) -V >/dev/null 2>&1 || ech
 #
 MISSING += $(call funCheckVariable,NAME_VIDEO_OUT)
 MISSING += $(call funCheckVariable,NAME_VIDEO_OUT_OVERLAY)
-#MISSING += $(call funCheckVariable,NAME_AUDIO_INTERCOM)
 MISSING += $(call funCheckVariable,NAME_AUDIO_MIX)
 MISSING += $(call funCheckVariable,PATTERN_VIDEO_IN)
 MISSING += $(call funCheckVariable,OVERLAY)
@@ -154,8 +153,10 @@ $(NAME_VIDEO_OUT).json: $(NAME_VIDEO_OUT)
 	@echo "converting telemetry data of $^"
 	@$(EXIFTOOL) -n -b -ee -G3 -json -api largefilesupport=1 "$(NAME_VIDEO_OUT)" | \
 	$(CONVERT_TELE) \
-		$(if $(NUM_SAMPLES),--samples "$(NUM_SAMPLES)") \
+		$(if $(SAMPLES),--samples "$(SAMPLES)") \
 		$(if $(INITIAL_ROW),--init "$(INITIAL_ROW)") \
+		$(if $(HDOP),--hdop $(HDOP) ) \
+		$(if $(MIN_SPEED),--minspeed $(MiN_SPEED) ) \
 		"$(NAME_VIDEO_OUT).json"
 
 #
@@ -171,6 +172,9 @@ $(NAME_VIDEO_OUT).gpx: $(NAME_VIDEO_OUT).json
 $(NAME_VIDEO_OUT_OVERLAY): $(NAME_VIDEO_OUT) $(NAME_VIDEO_OUT).json $(NAME_AUDIO_MIX) $(OVERLAY)
 	@echo "creating overlay video"
 	@$(ADD_OVERLAY) --vcodec libx264 --acodec copy --params "$(X264_PARAMS)" \
+		$(foreach STR_OFFSET,$(OFFSETS),--offset $(STR_OFFSET) ) \
+		$(if $(TQS),--tqs $(TQS) ) \
+		$(if $(TQS),--tprint $(TPRINT) ) \
 		$(NAME_VIDEO_OUT) \
 		$(NAME_AUDIO_MIX) \
 		$(OVERLAY) \

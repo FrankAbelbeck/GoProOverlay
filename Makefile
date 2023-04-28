@@ -48,11 +48,26 @@ VOLCOCKPIT  = 0.5
 VOLINTERCOM = 2
 DOJOIN = True
 
-# telemetry processing parameters
-# by defining NUM_SAMPLES you can define the number of samples interpolated from sequence-type telemetry values (e.g. accelerometer)
-# by defining INITIAL_ROW is non-empty, defined a JSON 
-#NUM_SAMPLES = 8
-#INITIAL_ROW = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]
+# telemetry processing parameter:
+#   SAMPLES: if non-empty, defines the number of samples interpolated from sequence-type telemetry values
+#            if undefined, defaults to framerate
+#   OFFSETS: space-separated list of values passed via --offset arguments to addOverlay.py; Key=Value:TStart-TEnd[:Method]
+#            default: none
+#   HDOP: horizontal dilution of precision value used during telemetry conversion
+#         default: 10
+#   MIN_SPEED: set a minimum GPS speed (m/s) that needs to be reached to calculate true course and rate of descend
+#              default: 1
+#   INITIAL_ROW: JSON dictionary of initial values used during telemetry conversion
+#   TQS: set thread_queue_size for reading frames (default: 1024)
+#   TPRINT: set number of seconds between addOverlay.py progress updates
+#           default: 5
+#SAMPLES = 50
+#OFFSETS = Altitude=4.2672:0-790 Altitude=0.9144:2966-
+#HDOP = 5
+#MIN_SPEED = 1
+#INITIAL_ROW = { "Distance": 0.0 }
+#TQS = 1024
+#TPRINT = 5
 
 
 # include main makefile

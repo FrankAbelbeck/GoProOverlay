@@ -71,7 +71,7 @@ if __name__ == "__main__":
 		help="Output framerate (default: use video framerate)",
 	)
 	parser.add_argument("--force",
-		help="Don't trim overlapping video parts, print a warning instead.",
+		help="Don't trim overlapping or enclosed or outlying video parts, print warnings instead.",
 		action="store_true"
 	)
 	args = parser.parse_args()

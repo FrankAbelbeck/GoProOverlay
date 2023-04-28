@@ -185,3 +185,8 @@ filter expression. The example `Makefile` shows how to use it.
  * **2023-03-20** initial script-based version
  * **2023-04-23** transition from scripts to central Makefile
  * **2023-04-24** initial commit
+ * **2023-04-28** added offset calculation (to calibrate e.g. altitude), 
+                  GPS precision handling (honour HDOP/Speed), 
+                  changed initial/last row representation from list to dict, 
+                  added variables to Makefile.mk to allow more tweaking
+

@@ -46,16 +46,21 @@ if __name__ == "__main__":
 			"lon",
 			"alt",
 			"head",
-			"speed"
+			"speed",
+			"hdop"
 		))
 		for lstRow in dctIn["rows"]:
 			dt = datetime.datetime.utcfromtimestamp(lstRow[dctHdg["TimeGPS"]])
-			writer.writerow((
-				dt.strftime("%Y/%m/%d"),
-				dt.strftime("%H:%M:%S.%f"),
-				lstRow[dctHdg["Latitude"]],
-				lstRow[dctHdg["Longitude"]],
-				lstRow[dctHdg["Altitude"]],
-				lstRow[dctHdg["TrueCourse"]],
-				lstRow[dctHdg["GPSSpeed2D"]],
-			))
+			try:
+				writer.writerow((
+					dt.strftime("%Y/%m/%d"),
+					dt.strftime("%H:%M:%S.%f"),
+					float(lstRow[dctHdg["Latitude"]]),
+					float(lstRow[dctHdg["Longitude"]]),
+					float(lstRow[dctHdg["Altitude"]]),
+					float(lstRow[dctHdg["TrueCourse"]]),
+					float(lstRow[dctHdg["GPSSpeed2D"]]),
+					float(lstRow[dctHdg["HorizontalError"]]),
+				))
+			except (TypeError,ValueError):
+				pass # ignore bad GPS data
