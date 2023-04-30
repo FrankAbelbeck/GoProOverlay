@@ -494,7 +494,7 @@ if __name__ == "__main__":
 	meta = readerMp4.__next__()
 	tplSize = meta["size"]
 	fltFps = meta["fps"]
-	intNumFrames = int(meta["duration"] * fltFps)
+	intNumFrames = math.ceil(meta["duration"] * fltFps)
 	
 	print(f"""
    size:   {'⨯'.join([str(i) for i in tplSize])}
