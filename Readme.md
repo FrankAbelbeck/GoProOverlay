@@ -189,4 +189,5 @@ filter expression. The example `Makefile` shows how to use it.
                   GPS precision handling (honour HDOP/Speed), 
                   changed initial/last row representation from list to dict, 
                   added variables to Makefile.mk to allow more tweaking
-
+ * **2023-05-18** addOverlay.py: added start/duration arguments,
+                  added $DEFAULT variable for params argument

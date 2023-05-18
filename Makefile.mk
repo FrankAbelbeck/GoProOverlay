@@ -106,7 +106,7 @@ FILES_RECODED = $(foreach FILE,$(wildcard $(PATTERN_VIDEO_IN)),$(FILE).mp4)
 
 audio: $(NAME_AUDIO_MIX)
 video: $(NAME_VIDEO_OUT) $(NAME_VIDEO_OUT).json $(NAME_VIDEO_OUT).gpx
-overlay: $(NAME_VIDEO_OUT_OVERLAY)
+overlay: $(NAME_VIDEO_OUT_OVERLAY) video
 
 #
 # rule: convert raw footage chunk to x264 reduced-size file, copy audio and gpmd data
@@ -175,6 +175,8 @@ $(NAME_VIDEO_OUT_OVERLAY): $(NAME_VIDEO_OUT) $(NAME_VIDEO_OUT).json $(NAME_AUDIO
 		$(foreach STR_OFFSET,$(OFFSETS),--offset $(STR_OFFSET) ) \
 		$(if $(TQS),--tqs $(TQS) ) \
 		$(if $(TQS),--tprint $(TPRINT) ) \
+		$(if $(START),--start $(START) ) \
+		$(if $(DURATION),--duration $(DURATION) ) \
 		$(NAME_VIDEO_OUT) \
 		$(NAME_AUDIO_MIX) \
 		$(OVERLAY) \

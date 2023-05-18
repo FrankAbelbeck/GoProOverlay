@@ -43,6 +43,7 @@ except ModuleNotFoundError as e:
 	print(e)
 	sys.exit(1)
 
+
 class Overlay:
 	"""Class for overlay-based video frame processing.
 
@@ -422,6 +423,8 @@ Returns:
 
 
 if __name__ == "__main__":
+	STR_PARAMS_DEFAULT = "-preset slow -crf 28 -tune film"
+	
 	parser = argparse.ArgumentParser(description="Add an Overlay to every frame of a given MP4 file.")
 	parser.add_argument("--version", action="version", version="20230416")
 	parser.add_argument("VIDEO",
@@ -450,8 +453,8 @@ if __name__ == "__main__":
 		default="copy"
 	)
 	parser.add_argument("--params",
-		help='Additional ffmpeg parameters, e.g. for the video and/or audio codec or to invoke a filter; specified as a command line string fragment; default: "-preset slow -crf 28 -tune film"',
-		default="-preset slow -crf 28 -tune film"
+		help='Additional ffmpeg parameters, e.g. for the video and/or audio codec or to invoke a filter; specified as a command line string fragment; default: "-preset slow -crf 28 -tune film"; the default can be referenced using the variable $DEFAULT',
+		default=STR_PARAMS_DEFAULT
 	)
 	parser.add_argument("--tqs",
 		help="thread_queue_size for reading frames (default: 1024)",
@@ -473,12 +476,40 @@ if __name__ == "__main__":
 		action="append",
 		default=[]
 	)
+	parser.add_argument("--duration",
+		help="Limit duration of the input video file to DURATION seconds (default: no limit)",
+		type=float
+	)
+	parser.add_argument("--start",
+		help="Start encoding at timestamp START, given in seconds (default: 0.0)",
+		type=float,
+		default=0.0
+	)
 	args = parser.parse_args()
+	
+	# 20230518: process start and duration args
+	#    -> seek input, limit duration
+	#    -> switch to aac codec if start and/or duration are given (due to filtering)
+	fltStart = max(0,args.start) # limit to positive numbers
+	try:
+		fltDuration = max(0,args.duration)
+	except TypeError:
+		fltDuration = -1.0 # signal undefined duration
+	lstParamsIn = []
+	if fltStart > 0:
+		lstParamsIn.extend(["-ss",str(fltStart)])
+	if fltDuration > 0:
+		lstParamsIn.extend(["-t",str(fltDuration)])
+	if lstParamsIn:
+		strACodec = "aac"
+	else:
+		strACodec = args.acodec
 	
 	print(f"""Setting up video/audio reader for file {args.VIDEO}...""")
 	# open MP4 reader
 	readerMp4 = imageio_ffmpeg.read_frames(
-		args.VIDEO
+		args.VIDEO,
+		input_params = lstParamsIn
 	)
 	# read first frame = metadata
 	# fields:
@@ -497,15 +528,16 @@ if __name__ == "__main__":
 	intNumFrames = math.ceil(meta["duration"] * fltFps)
 	
 	print(f"""
-   size:   {'⨯'.join([str(i) for i in tplSize])}
-   fps:    {fltFps}
-   frames: {intNumFrames}
+   size:     {'⨯'.join([str(i) for i in tplSize])}
+   fps:      {fltFps}
+   frames:   {intNumFrames}
 
-Parsing overlay file {args.OVERLAY.name} and telemetry file {args.TELEMETRY.name}...""")
+Parsing overlay file {args.OVERLAY.name}...""")
 	
 	# parse overlay definition JSON file
 	ovr = Overlay(args.OVERLAY)
-	
+
+	print(f"""Parsing telemetry file {args.TELEMETRY.name}...""")
 	# parse telemetry file and process offset arguments
 	tele = Telemetry(args.TELEMETRY,fltFps,intNumFrames)
 	for strOffset in args.offset:
@@ -514,24 +546,47 @@ Parsing overlay file {args.OVERLAY.name} and telemetry file {args.TELEMETRY.name
 		except ValueError as e:
 			print(f"ignoring invalid argument '--offset {strOffset}' ({e})",file=sys.stderr)
 	
+	# 20230518: take duration and start argument into account to calculate frames-to-skip and total number of frames
+	# reader has to decode from the start because of audio track
+	# writer will skip until fltStart and break loop when reaching intNumFrames
+	intFramesSkip = math.ceil(fltStart * fltFps)
+	if fltDuration > 0:
+		intNumFrames = math.ceil(fltDuration * fltFps)
+	else:
+		intNumFrames = math.ceil(meta["duration"] * fltFps)
+	
 	print(f"""
 Setting up video/audio writer for file {args.OUTPUT}...""")
+	
+	# 20230518: deal with $DEFAULT variable in extra parameters
+	#    video will start at 0, audio might start at different timestamp due to fltStart
+	#    solution: filter audio by trimming and correcting the timestamps
+	lstParamsIn = ["-thread_queue_size",str(args.tqs)]
+	lstParamsOut = shlex.split(args.params.replace("$DEFAULT",STR_PARAMS_DEFAULT)) + ["-shortest"]
+	lstFilter = []
+	if fltStart > 0:
+		lstFilter.append(f"start={fltStart}")
+	if fltDuration > 0:
+		lstFilter.append(f"duration={fltDuration}")
+	if lstFilter:
+		lstParamsOut.extend(["-af",f"atrim={':'.join(lstFilter)},asetpts=PTS-STARTPTS"])
+	
 	writerMp4 = imageio_ffmpeg.write_frames(
 		args.OUTPUT,
 		tplSize,
-		macro_block_size=math.gcd(*tplSize), # set macro_block_size to the greatest common divisor of width and height
-		fps=fltFps,
-		codec=args.vcodec,
-		audio_path=args.AUDIO,
-		audio_codec=args.acodec,
-		input_params=["-thread_queue_size",str(args.tqs)],
-		output_params=shlex.split(args.params)
+		macro_block_size = math.gcd(*tplSize), # set macro_block_size to the greatest common divisor of width and height
+		fps = fltFps,
+		codec = args.vcodec,
+		audio_path = args.AUDIO,
+		audio_codec = strACodec,
+		input_params = lstParamsIn,
+		output_params = lstParamsOut
 	)
 	# seed the writer generator
 	writerMp4.send(None)
 	
 	print(f"""
-   audio codec: {args.acodec}
+   audio codec: {strACodec}
    video codec: {args.vcodec}
    parameters:  {args.params}
 	""")
@@ -548,7 +603,7 @@ Setting up video/audio writer for file {args.OUTPUT}...""")
 				ovr.apply(
 					frame,
 					tplSize,
-					tele.get(intFrame)
+					tele.get(intFrame+intFramesSkip)
 				)
 			)
 		except KeyboardInterrupt:
