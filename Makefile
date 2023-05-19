@@ -68,7 +68,8 @@ DOJOIN = True
 #INITIAL_ROW = { "Distance": 0.0 }
 #TQS = 1024
 #TPRINT = 5
-
+#DURATION = 10
+#START = 3745
 
 # include main makefile
 include /path/to/Makefile.mk
