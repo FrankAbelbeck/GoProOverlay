@@ -1,0 +1,83 @@
+# Frank Abelbeck GoPro Telemetry Overlay Toolset: example overlay command file
+# Copyright (C) 2023 Frank Abelbeck <frank@abelbeck.info>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# An OVRL file defines commands which are applied to the canvas in the order
+# given here. Each frame of a video is processed separately as follows:
+#
+#  1) create new canvas image of same size with colour black-transparent #00000000.
+#  2) apply commands in defined sequence
+#  3) alpha-composite canvas on frame
+
+# Command 'uses'
+# Declare all Python standard library modules needed for expression evaluation.
+# Module names have to be given as comma-separated list of identifiers.
+# This command is executed at parsing time to prepare the eval environment.
+# No expression evaluation will take place.
+uses datetime
+
+# Command 'image'
+# Alpha-composite an image on the current canvas.
+# All parameters are evaluated dynamically and can be altered by telemetry data.
+image
+	file "Overlay.png"  # string: name of the image file
+	# angle 0.0         # float: rotation angle in degrees, counter clockwise
+	# pivot None        # 2-tuple of integers: pivot point of the rotation, in image coordinates; default: center of image
+	# move 10,10        # 2-tuple of integers: translate the image after rotation to this position; default: None
+	# size 1920,1080    # 2-tuple of integers: resize the image prior to rotation to this size; default: None
+	# alpha 255         # integer: apply this alpha value to the image prior to alpha-composition
+
+# Command 'print'
+# Draw text on the current canvas. The content is set with the 'text' argument.
+# All parameters are evaluated dynamically and can be altered by telemetry data.
+print
+	text '----' if TimeGPS is None else datetime.datetime.utcfromtimestamp(TimeGPS).strftime('%H%M')
+	position 335,1040          # 2-tuple of integers: position of the text
+	anchor "mm"                # string: anchor of the text, ie relative position to 'position'
+	align "center"             # string: alignment of the text ("left", "center", "right")
+	font "~/.fonts/Topic.ttf"  # string: truetype font name
+	size 56                    # integer: truetype font size in pixels
+	colour "#ffd700"           # string/tuple: a valid PIL.ImageColor colour specifier
+
+# The following print commands re-use most of the arguments of the previous print command.
+
+print
+	position 516,1040
+	text '---' if TrueCourse is None else str(TrueCourse).zfill(3)
+
+print
+	position 707,1040
+	text '---' if Altitude is None else f'{int(Altitude / 0.3048)} ft'
+
+print
+	position 904,1040
+	text '---' if GPSSpeed2D is None else f'{int(GPSSpeed2D * 3600 / 1852)} kn'
+
+print
+	position 1125,1040
+	text '---' if Vario is None else f'{int(Vario *60 / 0.3048)} ft/min'
+
+print
+	position 1326,1040
+	text '---' if Distance is None else f'{int(Distance / 1852)} NM'
+	
+print
+	position 1519,1040
+	text '---' if Temperature is None else f'{int(Temperature)} °C'
+
+# Command 'mask'
+# Apply a mask image to the current canvas.
+# mask
+	# file FILENAME # string: name of the mask image file
