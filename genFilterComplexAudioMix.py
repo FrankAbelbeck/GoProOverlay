@@ -16,12 +16,14 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+STR_VERSION = "20230524"
+
 import sys
 import argparse
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Generate a complex FFmpeg filter expression, mixing two audio tracks with defined volume adjusts, offsets, and tempo.")
-	parser.add_argument("--version", action="version", version="20230416")
+	parser.add_argument("--version", action="version", version=STR_VERSION)
 	parser.add_argument("--volcockpit",
 		help="Cockpit audio stream volume adjustment",
 		type=float,

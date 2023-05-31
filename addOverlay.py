@@ -20,6 +20,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #  https://github.com/imageio/imageio-ffmpeg
 #  https://pillow.readthedocs.io/en/stable/reference/Image.html
 
+STR_VERSION="20230529"
+
 # standard library modules
 import sys
 import os.path
@@ -32,6 +34,7 @@ import math
 import re
 import statistics
 import functools
+import types
 
 # external dependencies
 try:
@@ -44,17 +47,567 @@ except ModuleNotFoundError as e:
 	sys.exit(1)
 
 
+class OverlayCommand:
+	"""Base class for all overlay commands.
+"""
+	DCT_GLOBALS = {}
+	STR_CWD = ""
+	
+	def __init__(self,strCmd,lstArgsAccepted=[]):
+		"""Constructor: initialise an OverlayCommand instance.
+
+Args:
+   strCmd: a string, the command identifier.
+   lstArgsAccepted: an iterable of strings, defining accepted argument names.
+"""
+		self._strCmd = str(strCmd)
+		self._lstArgsAccepted = list(lstArgsAccepted)
+		self._dctArgs = { key:None for key in self._lstArgsAccepted }
+		self._dctArgsRuntime = { }
+	
+	def __hash__(self):
+		return hash((self._strCmd,tuple(self._dctArgs)))
+	
+	@classmethod
+	def clearGlobals(cls):
+		"""Clear the globals class variable, used to define the evaluation environment.
+"""
+		cls.DCT_GLOBALS = { }
+	
+	@classmethod
+	def setCWD(cls,strFilename):
+		"""Set the current working directory to the directory of given filename.
+
+Args:
+   strFilename: a string.
+"""
+		cls.STR_CWD = os.path.dirname(os.path.realpath(os.path.expanduser(strFilename)))
+	
+	@classmethod
+	def addModule(cls,strMod):
+		"""Import a module into the command's environment.
+
+Args:
+   strMod: a string, the module name
+
+Raises:
+   ModuleNotFoundError: given module is not found (batteries not included?).
+   ImportError: give module is not a standard module.
+"""
+		if strMod in sys.stdlib_module_names:
+			cls.DCT_GLOBALS[strMod] = importlib.import_module(strMod)
+		else:
+			raise ImportError("non-standard module '{strMod}'")
+	
+	@classmethod
+	def processFilename(cls,strFilename):
+		"""Process a filename string.
+
+Expands ~ to current user's home directory;
+joins to current working directory if relative;
+generates canonical path.
+
+Args:
+   strFilename: a string.
+
+Returns:
+   A string.
+"""
+		strFilename = os.path.expanduser(strFilename) # expand ~ to /home/...
+		if not os.path.isabs(strFilename):
+			strFilename = os.path.join(cls.STR_CWD,strFilename) # join CWD and relative path
+		return os.path.realpath(strFilename) # return canonical path, resolving symlinks
+	
+	def evaluateArguments(self,dctTelemetry=None):
+		"""Evaluate all arguments of this command.
+
+Args:
+   dctTelemetry: a dictionary, mapping variable names to values;
+                 if not set, NameErrors will silently ignored;
+
+Raises:
+   NameError: could not resolve a variable during evaluation.
+   Any exception that might occur during expression evaluation.
+"""
+		for strArg,codeExpression in self._dctArgs.items():
+			# iterate over all code expressions and evaluate them
+			varExpression = codeExpression
+			if isinstance(codeExpression,types.CodeType):
+				try:
+					varExpression = eval(codeExpression,self.DCT_GLOBALS,dctTelemetry)
+				except NameError:
+					# only raise NameError if dctTelemetry defined
+					# (otherwise it might be due to undefined telemetry setup)
+					if dctTelemetry:
+						raise
+				except Exception as e:
+					print(self._strCmd,strArg,self.DCT_GLOBALS,dctTelemetry)
+					raise
+			if not dctTelemetry:
+				# if telemetry data is not present, update argument dictionary 
+				self._dctArgs[strArg] = varExpression
+			else:
+				# if telemetry data is present, update runtime dictionary
+				self._dctArgsRuntime[strArg] = varExpression
+	
+	def setArgument(self,strArg,strExpression):
+		"""Compile an expression and set it as argument value.
+
+Args:
+   strArg: a string, the argument identifier.
+   strExpression: a string, interpreted as Python statement.
+
+Raises:
+   TypeError: invalid strExpression type.
+   SyntaxError: invalid expression string.
+   NameError: argument identifier is not in list of accepted arguments.
+"""
+		if strArg in self._lstArgsAccepted:
+			self._dctArgs[strArg] = compile(strExpression,"<string>","eval")
+		else:
+			raise NameError
+	
+	def copyArguments(self,other):
+		"""Copy all arguments from another OverlayCommand instance.
+
+Args:
+   other: an OverlayCommand or subclass instance.
+
+Raises:
+   AttributeError: other is not an OverlayCommand or subclass instance.
+"""
+		self._dctArgs.update(other._dctArgs)
+	
+	def applyToFrame(self,imgFrame,drwFrame):
+		"""Apply command to given frame.
+
+This is a prototype that does nothing. Subclasses have to re-implement it.
+
+Args:
+   imgFrame: a PIL.Image instance.
+   drwFrame: a PIL.ImageDraw instance, preferable derived from imgFrame.
+"""
+		pass
+	
+	def __str__(self):
+		return f"""{self._strCmd} {", ".join([f"{key}={value}" for key,value in self._dctArgs.items()])}"""
+
+
+class OverlayCommandGenericImage(OverlayCommand):
+	"""Class for generic image manipulation in overlays.
+
+This class manages a mapping of filenames to PIL.Image.Image instances
+in order to reduce memory usage and image object creation overhead.
+"""
+	DCT_IMAGES = {}
+	
+	@classmethod
+	def clearImages(cls):
+		"""Clear the class variable that maps filenames to PIL.Image instances.
+"""
+		for key,value in cls.DCT_IMAGES:
+			try:
+				value.close()
+			except:
+				pass
+		cls.DCT_IMAGES = {}
+	
+	@classmethod
+	def getImage(cls,strFilename,strMode="RGBA"):
+		"""Get the PIL.Image instance associated with given filename.
+
+If filename is not yet known, open image file and convert the resulting
+PIL.Image.Image instance to given mode.
+
+For valid modes, please refer to:
+   https://pillow.readthedocs.io/en/stable/handbook/concepts.html#concept-modes
+
+Args:
+   strFilename: a string, the image filename.
+   strMode: a string, the desired mode; default: "RGBA".
+
+Returns:
+   A PIL.Image.Image instance associated with given filename.
+
+Raises:
+   ValueError: failed to load image file.
+"""
+		strFilename = cls.processFilename(strFilename)
+		try:
+			imgFilename = cls.DCT_IMAGES[strFilename]
+		except KeyError:
+			try:
+				imgFilename = PIL.Image.open(strFilename).convert(strMode)
+			except (ValueError,TypeError,FileNotFoundError,PIL.Image.UnidentifiedImageError,PIL.Image.DecompressionBombWarning,PIL.Image.DecompressionBombError) as e:
+				raise ValueError(f"failed to load image file '{strFilename}' ({e})") from e
+			else:
+				cls.DCT_IMAGES[strFilename] = imgFilename
+		return imgFilename
+
+
+class OverlayCommandImage(OverlayCommandGenericImage):
+	"""Class for an image load/modify/paste command.
+
+Shares image database of parent class.
+"""
+	def __init__(self):
+		"""Constructor: initialise instance.
+"""
+		super().__init__("image",["file","angle","pivot","move","size","alpha","mask"])
+	
+	def applyToFrame(self,imgFrame,drwFrame):
+		"""Apply command to given frame.
+
+This carries out the following operations:
+
+ 1) Load image specified by 'file'.
+ 2) Resize image if 'size' is defined.
+ 3) Rotate image if 'angle' is defined;
+    if 'pivot' is defined, rotate around that point instead of center.
+ 4) Set image alpha channel to value 'alpha' if defined.
+ 5) Paste image to imgFrame at position specified in 'move' (default: (0,0)).
+
+Args:
+   imgFrame: a PIL.Image instance.
+   drwFrame: a PIL.ImageDraw instance, preferable derived from imgFrame.
+
+Raises:
+   KeyError: no runtime values (you forgot to call evaluateArguments())
+   ValueError: loading image failed.
+   Any exceptions PIL might raise in resize(), rotate(), putalpha(), or paste().
+"""
+		strFilename = self._dctArgsRuntime["file"]
+		tplSize     = self._dctArgsRuntime["size"]
+		floatAngle  = self._dctArgsRuntime["angle"]
+		tplPivot    = self._dctArgsRuntime["pivot"]
+		tplMove     = self._dctArgsRuntime["move"]
+		intAlpha    = self._dctArgsRuntime["alpha"]
+		strMask     = self._dctArgsRuntime["mask"]
+		
+		imgPaste = self.getImage(strFilename)
+		try:
+			imgMask = self.getImage(strMask,"LA")
+		except (ValueError,TypeError):
+			imgMask = None
+		
+		if tplSize is not None:
+			imgPaste = imgPaste.resize(tplSize)
+			imgMask = imgMask.resize(tplSize)
+		
+		if floatAngle is not None and floatAngle != 0:
+			imgPaste = imgPaste.rotate(floatAngle,center=tplPivot,translate=tplMove)
+			tplMove = None
+		
+		if intAlpha is not None and intAlpha != 255:
+			imgPaste.putalpha(intAlpha)
+		
+		imgFrame.paste(imgPaste,box=tplMove,mask=imgMask)
+
+
+class OverlayCommandText(OverlayCommand):
+	"""Class for printing text on a frame.
+
+This class manages a mapping of filenames to PIL.ImageFont.ImageFont instances
+in order to reduce memory usage and font object creation overhead.
+
+"""
+	DCT_FONTS = {}
+	
+	def __init__(self):
+		"""Constructor: initialise instance.
+"""
+		super().__init__("print",["text","position","anchor","align","font","size","colour","mask"])
+	
+	@classmethod
+	def clearFonts(cls):
+		"""Clear the class variable that maps filenames to PIL.ImageFont.ImageFont instances.
+"""
+		cls.DCT_FONTS = {}
+	
+	@classmethod
+	def getFont(cls,strFilename,intSizePx):
+		"""Get the PIL.ImageFont.ImageFont instance associated with given filename and size.
+
+If the combination of (strFilename,intSizePx) is not yet known, load and
+memorise truetype font.
+
+Args:
+   strFilename: a string, the font filename.
+   intSizePx: an integer, pixel size of the font to load.
+
+Returns:
+   A PIL.ImageFont.ImageFont instance associated with given filename/size combo.
+
+Raises:
+   ValueError: failed to load truetype file.
+"""
+		strFilename = cls.processFilename(strFilename)
+		try:
+			fontFilename = cls.DCT_FONTS[(strFilename,intSizePx)]
+		except KeyError:
+			try:
+				fontFilename = PIL.ImageFont.truetype(strFilename,intSizePx)
+			except OSError:
+				raise ValueError(f"failed to load TTF file '{strFilename}' with size {intSizePx} ({e})")
+			else:
+				cls.DCT_FONTS[(strFilename,intSizePx)] = fontFilename
+		return fontFilename
+	
+	def applyToFrame(self,imgFrame,drwFrame):
+		"""Draw text on given drawing context.
+
+Args:
+   imgFrame: a PIL.Image instance.
+   drwFrame: a PIL.ImageDraw instance, preferable derived from imgFrame.
+
+Raises:
+   KeyError: no runtime values (you forgot to call evaluateArguments())
+   ValueError: loading font failed.
+   Any exceptions PIL might raise in text().
+"""
+		drwFrame.text(
+			self._dctArgsRuntime["position"],
+			self._dctArgsRuntime["text"],
+			self._dctArgsRuntime["colour"],
+			self.getFont(self._dctArgsRuntime["font"],self._dctArgsRuntime["size"]),
+			anchor=self._dctArgsRuntime["anchor"],
+			align=self._dctArgsRuntime["align"]
+		)
+
+
+class OverlayCommandMask(OverlayCommandGenericImage):
+	"""Class for a mask command.
+
+Shares image database of parent class.
+"""
+	
+	def __init__(self):
+		"""Constructor: initialise instance.
+"""
+		super().__init__("mask",["file"])
+	
+	def applyToFrame(self,imgFrame,drwFrame):
+		"""Apply command to given frame.
+
+This carries out the following operations:
+
+ 1) Load mask image and resize to frame size.
+ 2) Set alpha channel of imgFrame to this mask image.
+
+Args:
+   imgFrame: a PIL.Image instance.
+   drwFrame: a PIL.ImageDraw instance, preferable derived from imgFrame.
+
+Raises:
+   KeyError: no runtime values (you forgot to call evaluateArguments())
+   ValueError: loading image failed.
+   Any exceptions PIL might raise in resize(), or putalpha().
+"""
+		imgMask = self.getImage(self._dctArgsRuntime["file"]).resize(imgFrame.size)
+		imgFrame.putalpha(imgMask)
+
+
 class Overlay:
 	"""Class for overlay-based video frame processing.
 
 Overlay Definition:
 
 An overlay is a sequence of commands, applied to a video frame. It is defined
-as a JSON list of command lists. Each command list consists of a command
-identifier, followed by a variable number of arguments.
+either as a JSON list of command lists or as an OVRL text file.
+"""
+	# regExp groups:
+	#  0: optional tab (might be empty)
+	#  1: identifier
+	#  2: rest of line, starting with first non-whitespace character
+	RE_TOKENISER = re.compile(r'''^(\t?)([\w]+)[\s]*(.*)$''',re.M)
+	
+	def __init__(self,fFileOverlay,strErrLog="last"):
+		"""Constructor: initialise an instance.
 
-The commands are applied in the same sequence as specified in the JSON file,
-starting with the frame as base canvas.
+Args:
+   fFileOverlay: a file-like object; JSON or OVRL source of overlay commands.
+   strErrLog: a string defining the error logging behaviour; if set to 'last',
+              (default), only the most recent error is logged; if set to 'all',
+              all errors are logged.
+Raises:
+   SyntaxError: invalid input format.
+"""
+		self.clear()
+		self._strFilename = fFileOverlay.name
+		OverlayCommand.setCWD(self._strFilename)
+		self._strErrLog = str(strErrLog)
+		try:
+			self.loadJSON(fFileOverlay)
+		except json.JSONDecodeError:
+			self.loadOVRL(fFileOverlay)
+	
+	def clear(self):
+		"""Clear the command list and reset warning variables.
+"""
+		self._strFilename = ""
+		self._intIdxLine = 0
+		self._boolIsTainted = False
+		self._dctErrors = {}
+	
+	def warn(self,strMsg):
+		"""Issue a warning to sys.stderr.
+"""
+		print(f"[{self._strFilename}:{self._intIdxLine}] {strMsg}",file=sys.stderr)
+		self._boolIsTainted = True
+	
+	def loadOVRL(self,fOvrl):
+		r"""Load a given OVRL overlay command file.
+
+This method will keep parsing the text data but will print warnings.
+If there is at least one warning, it raises a SyntaxError.
+
+The OVRL file is line-oriented. Empty lines and lines starting with
+'#' (comment) or '\t#' (indented comment) will be ignored.
+
+Each un-indented line is interpreted as a command identifier, optionally
+followed by an expression string.
+
+Each tab-indented line is interpreted as an argument identifier, followed by
+an expression string. Indented lines define arguments for the most recently
+defined command.
+
+Except for the 'uses' command, all expression strings will be compiled and
+evaluated, so that every parameter can be tuned by telemetry data at runtime.
+
+Since this empoys 'eval', you are free to shoot your own foot. Be cautious!
+Any modules beyond builtins have to be imported explicitly with 'uses'.
+
+
+Command: module import
+
+   uses mod0 [, mod1, ...]
+
+Request that given modules are loaded into the overlay's runtime scope;
+mod0..mod1 specify module name strings.
+
+
+Command: image pasting
+
+   image
+      file  expression_string
+      size  expression_2tuple_of_integers
+      angle expression_float
+      pivot expression_2tuple_of_integers
+      move  expression_2tuple_of_integers
+      alpha expression_integer
+      
+Request that the image at given path is alpha-composited onto the frame,
+optionally resizing size=(w,h), rotating angle degrees around pivot=(x,y),
+moving move=(x,y) and alpha-blending it.
+
+
+Command: text printing
+
+   print
+      text     expression_string
+      position expression_2tuple_of_integers
+      anchor   expression_string
+      align    expression_string
+      font     expression_string
+      size     expression_integer
+      colour   expression_string
+
+Request that text is drawn onto the frame at a position with given
+anchor (cf [1]), alignment ("left","center","right"), using given truetype font
+file and pixel size, drawing in given colour (cf. [2])
+
+[1] https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
+[2] https://pillow.readthedocs.io/en/stable/reference/ImageColor.html
+
+
+Args:
+   fOvrl: a file-like object.
+
+Raises:
+   SyntaxError: invalid file content
+"""
+		lstCommands = []
+		fOvrl.seek(0)
+		cmdOverlay = None
+		for self._intIdxLine,strLine in enumerate(fOvrl.readlines()):
+			strLine = strLine.rstrip()
+			if not strLine or strLine.startswith("\t#") or strLine.startswith("#"):
+				# empty line or (indented) comment: ignore
+				continue
+			# token line: apply regExp, get optional leading tab, identifier and remaining expression
+			try:
+				strTab,strIdentifier,strExpression = self.RE_TOKENISER.match(strLine).groups()
+			except AttributeError as e:
+				# regExp didn't match: malformed line!
+				self.warn("malformed line")
+				continue
+			
+			if not strTab:
+				# un-indented line: new command; finalise current command (if given)
+				if cmdOverlay is not None:
+					lstCommands.append(cmdOverlay)
+				match strIdentifier:
+					case "uses":
+						# declare required python modules
+						# syntax: 'uses name[,name,...]
+						for strMod in strExpression.split(","):
+							try:
+								OverlayCommand.addModule(strMod.strip())
+							except ImportError as e:
+								self.warn(f'module import error ({e})')
+					case "image":
+						cmdOverlay = OverlayCommandImage()
+					case "print":
+						cmdOverlay = OverlayCommandText()
+					case "mask":
+						cmdOverlay = OverlayCommandMask()
+					case _:
+						self.warn("unkown command '{strIdentifier}'")
+				
+				# copy arguments from most recent command of same type
+				# (define args once, re-use until redefined)
+				for cmdOverlayRecent in lstCommands[::-1]:
+					if isinstance(cmdOverlayRecent,type(cmdOverlay)):
+						cmdOverlay.copyArguments(cmdOverlayRecent)
+						break
+			else:
+				# indented line: new argument, add to current command
+				if cmdOverlay is not None:
+					try:
+						cmdOverlay.setArgument(strIdentifier,strExpression)
+					except SyntaxError as e:
+						self.warn(f"syntax error in '{strExpression}' ({e})")
+					except NameError as e:
+						self.warn(f"unknown argument '{strIdentifier}'")
+				else:
+					self.warn(f"argument '{strIdentifier}' without command")
+		
+		# all lines processed: if there's an active command, append it
+		if cmdOverlay is not None:
+			lstCommands.append(cmdOverlay)
+		
+		if self._boolIsTainted:
+			raise SyntaxError("tainted overlay file")
+		else:
+			for cmdOverlay in lstCommands:
+				cmdOverlay.evaluateArguments()
+			self._lstSteps = lstCommands
+	
+	
+	def loadJSON(self,fJSON):
+		"""Load a given JSON overlay command file.
+
+This method will keep parsing the JSON data but will print warnings.
+If there is at least one warning, it raises a SyntaxError.
+
+The JSON data is expected to be a list of list, specifying a sequence of
+commands.
+
+Each command is a list with a command identifier, followed by a variable
+number of arguments.
+
+Please note: format is frozen in favour of the OVRL format. No new features
+(such as 'mask') will be added.
 
 Commands:
 
@@ -77,68 +630,15 @@ Commands:
       ...size   = font size in pixels
       ...colour = hexadecimal colour specifier (#rgb, #rgba, #rrggbb, #rrggbbaa)
 
-"""
-	
-	CMD_UNKNOWN = 0 # unknown command
-	CMD_IMAGE = 1   # command: alpha-composite an image
-	CMD_TEXT  = 2   # command: draw text
-	
-	def __init__(self,fJSON):
-		"""Constructor: initialise an instance.
-
 Args:
-   fJSON: a file-like object; JSON source of overlay commands.
+	fJSON: a file-like object.
 
 Raises:
-   json.JSONDecodeError: invalid JSON input.
+	json.JSONDecodeError, TypeError: invalid JSON input.
+	SyntaxError: Invalid input format
 """
-		self._lstSteps = []
-		self._dctFonts = {}
-		self._dctGlobals = {}
-		self._cwd = os.path.dirname(os.path.realpath(os.path.expanduser(fJSON.name)))
-		self.load(fJSON)
-	
-	def clear(self):
-		"""Clear all internal variables. Also closes any pre-loaded objects like images.
-"""
-		for step in self._lstSteps:
-			try:
-				step.close()
-			except:
-				pass
-		self._lstSteps = []
-		self._dctFonts = {}
-		self._dctGlobals = {}
-	
-	def processFilename(self,strFilename):
-		"""Process a filename string.
-
-Expands ~ to current user's home directory;
-joins to current working directory if relative;
-generates canonical path.
-
-Args:
-   strFilename: a string.
-
-Returns:
-   A string.
-"""
-		strFilename = os.path.expanduser(strFilename) # expand ~ to /home/...
-		if not os.path.isabs(strFilename):
-			strFilename = os.path.join(self._cwd,strFilename) # join CWD and relative path
-		return os.path.realpath(strFilename) # return canonical path, resolving symlinks
-	
-	def load(self,fJSON):
-		"""Load a given JSON overlay command file.
-
-Args:
-   fJSON: a file-like object.
-
-Raises:
-   json.JSONDecodeError: invalid JSON input.
-"""
-		self.clear()
-		for strCmd,*lstArgs in json.load(fJSON):
+		lstCommands = []
+		for self._intIdxLine,(strCmd,*lstArgs) in enumerate(json.load(fJSON)):
 			match strCmd:
 				case "mod":
 					# command: announce python module to use
@@ -146,98 +646,130 @@ Raises:
 					# modules are stored in separate dictionary that is passed
 					# to exec when it comes to string format evaluation
 					for strMod in lstArgs:
-						if strMod in sys.stdlib_module_names:
-							try:
-								self._dctGlobals[strMod] = importlib.import_module(strMod)
-							except ModuleNotFoundError:
-								print(f"failed to load module '{strMod}' requested by overlay",file=sys.stderr)
-						else:
-							print(f"overlay requested module '{strMod}' which is not in the standard library",file=sys.stderr)
+						try:
+							OverlayCommand.addModule(strMod.strip())
+						except ImportError as e:
+							self.warn(f'module import error ({e})')
+					
 				case "img":
 					# command: apply image
-					# todo: pre-load said image
-					lstArgs[0] = self.processFilename(lstArgs[0])
-					# append CMD_IMAGE step, pre-load image in PIL as alpha-RGB
+					cmdOverlay = OverlayCommandImage()
 					try:
-						self._lstSteps.append((
-							self.CMD_IMAGE,
-							PIL.Image.open(lstArgs[0]).convert("RGBA")
-						))
-					except KeyError:
-						print(f"incomplete img command (no path given)",file=sys.stderr)
-					except FileNotFoundError:
-						print(f"failed to load image '{lstArgs[0]}' requested by overlay",file=sys.stderr)
+						cmdOverlay.setArgument("file",f'f"""{lstArgs[0]}"""')
+					except SyntaxError as e:
+						self.warn(f"syntax error in '{strExpression}' ({e})")
+					except NameError as e:
+						self.warn(f"unknown argument '{strIdentifier}'")
+					lstCommands.append(cmdOverlay)
+					
 				case "txt":
-					try:
-						intX = int(lstArgs[0])
-						intY = int(lstArgs[1])
-						strAnchor = str(lstArgs[2])
-						strAlign = str(lstArgs[3])
-						strFormat = str(lstArgs[4])
-						strTTF = str(lstArgs[5])
-						intSizePx = int(lstArgs[6])
-						strColor = str(lstArgs[7])
-					except (IndexError,TypeError,ValueError):
-						print(f"failed to load text command",file=sys.stderr)
-					else:
+					# command: draw text
+					cmdOverlay = OverlayCommandText()
+					for strArg,intIdx in (("anchor",2),("align",3),("font",5),("colour",7)):
 						try:
-							fnt = self._dctFonts[(strTTF,intSizePx)]
-						except KeyError:
-							strTTF = self.processFilename(strTTF)
-							try:
-								fnt = PIL.ImageFont.truetype(strTTF,intSizePx)
-								self._dctFonts[(strTTF,intSizePx)] = fnt
-							except OSError:
-								print(f"failed to load font '{strTTF}' requested by overlay",file=sys.stderr)
-								continue
-						try:
-							codeFormat = compile(f'strText=f"{strFormat}"',"<string>","single")
+							cmdOverlay.setArgument(strArg,f'"""{lstArgs[intIdx]}"""')
 						except SyntaxError as e:
-							print(f"failed to compile format string '{strFormat}' requested by overlay: {e}",file=sys.stderr)
-						else:
-							self._lstSteps.append((
-								self.CMD_TEXT,
-								intX,intY,
-								strAnchor,strAlign,
-								codeFormat,
-								fnt,
-								strColor
-							))
+							self.warn(f"syntax error in '{strExpression}' ({e})")
+						except NameError as e:
+							self.warn(f"unknown argument '{strIdentifier}'")
+					try:
+						cmdOverlay.setArgument("text",f'f"""{lstArgs[4]}"""')
+					except SyntaxError as e:
+						self.warn(f"syntax error in '{strExpression}' ({e})")
+					except NameError as e:
+						self.warn(f"unknown argument '{strIdentifier}'")
+					try:
+						cmdOverlay.setArgument("size",f"{lstArgs[6]}")
+					except SyntaxError as e:
+						self.warn(f"syntax error in '{strExpression}' ({e})")
+					except NameError as e:
+						self.warn(f"unknown argument '{strIdentifier}'")
+					try:
+						cmdOverlay.setArgument("position",f"{lstArgs[0]},{lstArgs[1]}")
+					except SyntaxError as e:
+						self.warn(f"syntax error in '{strExpression}' ({e})")
+					except NameError as e:
+						self.warn(f"unknown argument '{strIdentifier}'")
+					lstCommands.append(cmdOverlay)
+		
+		if self._boolIsTainted:
+			raise SyntaxError("tainted overlay file")
+		else:
+			for cmdOverlay in lstCommands:
+				cmdOverlay.evaluateArguments()
+			self._lstSteps = lstCommands
+	
+	
+	def logError(self,strOperation,cmdOverlay,dctTelemetry,excError):
+		"""Create a new error log entry according to the configured behaviour.
+
+Args:
+   strOperation: a string defining the failed operation, like 'apply' or 'eval'.
+   cmdOverlay: an OverlayCommand or subclass instance.
+   dctTelemetry: a dictionary with the current telemetry state.
+   excError: the exception that triggered this method call.
+"""
+		if self._strErrLog == "all":
+			self._dctErrors.setdefault((cmdOverlay,strOperation),[]).append((excError,dctTelemetry))
+		else:
+			self._dctErrors[(cmdOverlay,strOperation)] = [(excError,dctTelemetry)]
+	
+	def getErrorLog(self):
+		return self._dctErrors
+	
+	def writeErrorLog(self,strFilename):
+		if self._dctErrors:
+			with open(strFilename,"w") as f:
+				for (cmdOvr,strOp),value in self._dctErrors.items():
+					f.write(f"{strOp} {cmdOvr}:\n")
+					for excErr,dctTele in value:
+						f.write(f"\tError: {excErr!r}\n")
+						for key,value in dctTele.items():
+							f.write(f"\t{key} = {value!r}\n")
 	
 	def apply(self,frame,tplSize,dctTelemetry):
 		"""Apply all Overlay commands to a given frame of given size.
 
 Overlay commands can access the variables passed by dctTelemetry.
 
+It will carry out the following operations:
+
+ 1) Create a transparent image of size tplSize.
+ 2) Apply the commands in sequence to this base image.
+ 3) Alpha-composite the imported frame with the modified base image
+ 4) Export the final image as a bytes instance.
+
 Args:
-   frame: a bytes instance; interpreted as PIL.Image (mode RGB, size tplSize).
+   frame: a bytes instance; interpreted as PIL.Image.Image instance
+	      (mode RGB, size tplSize).
    tplSize: a 2-tuple of integers (width, height) defining the frame size.
-	dctTelemetry: a dictionary defining variables for the given frame.
+   dctTelemetry: a dictionary defining variables for the given frame.
+
+Returns:
+   A bytes instance.
 """
-		imgNew = PIL.Image.frombytes("RGB",tplSize,frame).convert("RGBA")
-		drwNew = PIL.ImageDraw.Draw(imgNew)
-		for intCmd,*tplArgs in self._lstSteps:
-			match intCmd:
-				case self.CMD_IMAGE:
-					imgNew.alpha_composite(tplArgs[0])
-				case self.CMD_TEXT:
-					# pre-compiled string format code is executed in a safe environment
-					# globals is defined by modules requested by the Overlay plus __builtins__,
-					# locals is defined by the current telemetry info;
-					# the result strText is stored in the locals dictionary, i.e. dctTelemetry
-					try:
-						exec(tplArgs[4],self._dctGlobals,dctTelemetry)
-					except Exception as e:
-						print(f"apply.text: string formatting failed ({e}",file=sys.stderr)
-					else:
-						drwNew.text(
-							(tplArgs[0],tplArgs[1]),
-							dctTelemetry["strText"],
-							tplArgs[6],
-							tplArgs[5],
-							anchor=tplArgs[2],align=tplArgs[3]
-						)
-		return imgNew.convert("RGB").tobytes()
+		# create new drawing canvas from frame bytes as alpha-channel RGB
+		imgBase = PIL.Image.new("RGBA",tplSize,"#00000000")
+		drwBase = PIL.ImageDraw.Draw(imgBase)
+		# iterate over commands: paint on clear base image
+		for cmdOverlay in self._lstSteps:
+			try:
+				cmdOverlay.evaluateArguments(dctTelemetry)
+			except Exception as e:
+				self.logError("eval",cmdOverlay,dctTelemetry,e)
+			try:
+				cmdOverlay.applyToFrame(imgBase,drwBase)
+			except Exception as e:
+				self.logError("apply",cmdOverlay,dctTelemetry,e)
+		
+		# in the end: paste imgBase to imgFrame and export to bytes
+		return PIL.Image.alpha_composite(
+			PIL.Image.frombytes("RGB",tplSize,frame).convert("RGBA"),
+			imgBase
+		).convert("RGB").tobytes()
+	
+	def __str__(self):
+		return "\n".join([str(cmdOverlay) for cmdOverlay in self._lstSteps])
 
 
 class Telemetry:
@@ -426,7 +958,7 @@ if __name__ == "__main__":
 	STR_PARAMS_DEFAULT = "-preset slow -crf 28 -tune film"
 	
 	parser = argparse.ArgumentParser(description="Add an Overlay to every frame of a given MP4 file.")
-	parser.add_argument("--version", action="version", version="20230416")
+	parser.add_argument("--version", action="version", version=STR_VERSION)
 	parser.add_argument("VIDEO",
 		help="Video input file",
 	)
@@ -485,6 +1017,15 @@ if __name__ == "__main__":
 		type=float,
 		default=0.0
 	)
+	parser.add_argument("--errlog",
+		help="Define error logging behaviour; "
+			"if ERRLOG is 'last' (default), only save the most recent error; "
+			"if ERRLOG is 'all', save all errors (warning, might be a multiple of the frame number)",
+		default="last"
+	)
+	parser.add_argument("--errlogfile",
+		help="Safe error log as JSON data to given file",
+	)
 	args = parser.parse_args()
 	
 	# 20230518: process start and duration args
@@ -535,11 +1076,20 @@ if __name__ == "__main__":
 Parsing overlay file {args.OVERLAY.name}...""")
 	
 	# parse overlay definition JSON file
-	ovr = Overlay(args.OVERLAY)
+	try:
+		ovr = Overlay(args.OVERLAY,args.errlog)
+	except json.JSONDecodeError as e:
+		print(f"""   parsing failed: {e}""")
+		sys.exit(1)
 
 	print(f"""Parsing telemetry file {args.TELEMETRY.name}...""")
 	# parse telemetry file and process offset arguments
-	tele = Telemetry(args.TELEMETRY,fltFps,intNumFrames)
+	try:
+		tele = Telemetry(args.TELEMETRY,fltFps,intNumFrames)
+	except json.JSONDecodeError as e:
+		print(f"""   parsing failed: {e}""")
+		sys.exit(1)
+	
 	for strOffset in args.offset:
 		try:
 			tele.addOffset(strOffset)
@@ -632,3 +1182,6 @@ Setting up video/audio writer for file {args.OUTPUT}...""")
 	
 	print("\nDone")
 	writerMp4.close()
+	
+	if args.errlogfile:
+		ovr.writeErrorLog(args.errlogfile)

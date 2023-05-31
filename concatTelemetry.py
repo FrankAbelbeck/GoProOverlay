@@ -16,13 +16,15 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+STR_VERSION = "20230524"
+
 import argparse
 import json
 import sys
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Concat telemetry JSON data (from convertTelemetry.py), and write the result to a new file.")
-	parser.add_argument("--version", action="version", version="20230419")
+	parser.add_argument("--version", action="version", version=STR_VERSION)
 	parser.add_argument("OUT",
 		help="Telemetry JSON file; concatenated output ",
 		type=argparse.FileType('w')

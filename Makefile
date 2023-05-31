@@ -68,8 +68,19 @@ DOJOIN = True
 #INITIAL_ROW = { "Distance": 0.0 }
 #TQS = 1024
 #TPRINT = 5
+
+# addOverlay parameters
+#   DURATION: set duration of the overlay video file in seconds (default: no limit)
+#   START: start encoding at timestamp START, given in seconds (default: 0)
+#   ERRLOG: define the runtime error logging behaviour;
+#           if set to 'last' (default), only store the most recent error;
+#           if set to 'all', store all errors
+#   ERRLOGFILE: if defined, write the error log to the file with name ERRLOGFILE
 #DURATION = 10
 #START = 3745
+#ERRLOG = last
+#ERRLOGFILE = ${PREFIX}.errlog
+
 
 # include main makefile
 include /path/to/Makefile.mk

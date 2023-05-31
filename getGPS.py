@@ -16,6 +16,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+STR_VERSION = "20230524"
+
 import argparse
 import json
 import sys
@@ -24,7 +26,7 @@ import datetime
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Read telemetry JSON data (from convertTelemetry.py), and write GPS data as unicsv to stdout (suitable as stdin for gpsbabel).")
-	parser.add_argument("--version", action="version", version="20230416")
+	parser.add_argument("--version", action="version", version=STR_VERSION)
 	parser.add_argument("FILE",
 		help="Telemetry JSON file",
 		type=argparse.FileType('r')

@@ -16,6 +16,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+STR_VERSION = "20230524"
+
 import argparse   # argument parsing
 import json       # JSON data structures
 import itertools  # see batched: rearranging accelerometer/gyroscope vectors
@@ -104,7 +106,7 @@ if __name__ == "__main__":
 		description="Read GoPro telemetry JSON data (as extracted by exiftool) from stdin, and write revised JSON data to stdout.",
 		epilog="Column headings: " + ", ".join(HEADINGS)
 	)
-	parser.add_argument("--version", action="version", version="20230416")
+	parser.add_argument("--version", action="version", version=STR_VERSION)
 	parser.add_argument("--samples",
 		help="Set number of sampling points per entry for any multi-valued data (e.g. Accelerometer; default: number of frames per second)",
 		type=int

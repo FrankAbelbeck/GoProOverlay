@@ -16,6 +16,8 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
+STR_VERSION = "20230524"
+
 import argparse
 import sys
 import codecs
@@ -44,7 +46,7 @@ def processFloatFromList(lstChange,fltDefaultMissing,strMissing,strNonNumeric,st
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Create the filter expression to speed up and/or slow down a video file.")
-	parser.add_argument("--version", action="version", version="20230421")
+	parser.add_argument("--version", action="version", version=STR_VERSION)
 	parser.add_argument("--change",metavar="TS:TE:SP",
 		help="Change the video speed between start time TS and end time TE to a given speed factor SP (default 1 if empty, i.e. normal speed)",
 		action="append",
