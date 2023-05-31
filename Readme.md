@@ -28,7 +28,8 @@ An example workflow is provided as Makefiles.
  * `getGPS.py` create GPX file from JSON telemetry
  * `Makefile.mk` pre-defined workflow
  * `Makefile` example Makefile
- * `Overlay.json` example overlay configuration file
+ * `Overlay.json` example overlay configuration file (JSON format)
+ * `Overlay.ovrl` example overlay configuration file (OVRL format)
  * `Overlay.png` example overlay image file
  * `Readme.md` you are reading it atm
  * `COPYING` GPL 3 license text
@@ -42,7 +43,7 @@ It is divided as follows:
  2) Concatenate files to one raw video file.
  3) Mix cockpit audio (recorded via GoPro mic, from concatenated video) and intercom audio (recorded via mic-in-headset as separate file).
  4) Extract telemetry via Exiftool, convert it to a manageable custom JSON format, and extract GPS data as GPX file.
- 5) Wrap it up: feed raw video, mixed audio, telemetry data and overlay JSON file to `addOverlay.py`, resulting in the final video file.
+ 5) Wrap it up: feed raw video, mixed audio, telemetry data and overlay JSON/OVRL file to `addOverlay.py`, resulting in the final video file.
 
 Best practive to employ this pre-defined workflow:
 
@@ -95,7 +96,7 @@ The following variables are calculated during runtime and are available in the M
  * **$(NEWLINE)** a newline character
  * **$(COMMA)** a comma character 
 
-## Overlay Definition Language
+## Overlay Definition Language: JSON (deprecated)
 
 ### Synopsis
 
@@ -104,6 +105,8 @@ An overlay is defined by a list of commands, encoded as a JSON file. Each comman
 Each input video frame is copied into a current working frame (RGBA) and all commands are applied in given order.
 
 There is an example `Overlay.json` file.
+
+**Please note: Development of this format is suspended in favour of OVRL!**
 
 ### Command "mod": Load Python Module
 
@@ -131,7 +134,55 @@ Args: intX, intY, strAnchor, strAlign, strFormat, strTTF, intSizePx, strColor
  * `intSizePx` font size, in pixels
  * `strColor` font colour, given as hexadecimal string; see https://pillow.readthedocs.io/en/stable/reference/ImageColor.html for details
 
-### Available Telemetry Values
+## Overlay Definition Language: OVRL
+
+### Synopsis
+
+An overlay is defined by a list of commands. OVRL files encoded them as text lines, with indented lines denoting argument definitions.
+
+The values of all arguments are given as strings which are subsequently compiled and evaluated.
+This allows dynamic modification of all commands during runtime. Most noteably you can present text based on telemetry data.
+But also dynamic image rotation (gauges) is possible.
+
+For each frame a clean black-transparent canvas image is generated, which is modified by the commands specified in the file.
+In the end the frame and the canvas are alpha-composited and fed to the encoder.
+
+There is an example `Overlay.ovrl` file.
+
+### Command "uses": Load Python Modules
+
+Load python modules needed for expression evaluation. This is used to create the expression evaluation environment.
+
+Args: one or more module name identifiers, comma-separated.
+
+### Command "image": Apply an Image
+
+Alpha-composite an image on the current canvas.
+
+Args: file, angle, pivot, move, size, alpha (in parentheses: expected type after expression evaluation)
+
+ * `file` name of the image file (string)
+ * `angle` rotation angle in degrees (float); default 0.0
+ * `pivot` rotation center point (2-tuple of integers = (x,y)); default None (image center)
+ * `move` translate the image after rotation by this value (2-tuple of integers = (dx,dy)); default None
+ * `size` resize the image prior to rotation to this value (2-tuple of integers = (tx,ty)); default None
+ * `alpha` apply this alpha value to the resized/rotated image prior to pasting on the canvas (integer); default 255
+
+### Command "print": Draw Text
+
+Draw text on the current working frame.
+
+Args: position, anchor, align, text, font, size, colour
+
+ * `position` frame coordinates of the text anchor point (2-tuple of integers = (x,y))
+ * `anchor` text anchor (string); see https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html for details
+ * `align` text alignment (string); either "left", "center", or "right"
+ * `text` text to print (string)
+ * `font` TrueType font file name; the example uses the Topic font, available at https://www.1001fonts.com/topic-font.html
+ * `size` font size, in pixels
+ * `colour` font colour identifier (string|tuple); see https://pillow.readthedocs.io/en/stable/reference/ImageColor.html for valid identifiers
+
+## Available Telemetry Values
 
 The program `convertTelemetry.py` extracts telemetry data from a GoPro MP4 file
 and converts it to a JSON file with the following content:
@@ -192,4 +243,6 @@ filter expression. The example `Makefile` shows how to use it.
  * **2023-05-18** addOverlay.py: added start/duration arguments,
                   added $DEFAULT variable for params argument
  * **2023-05-19** added start/duration variables to example Makefile
-
+ * **2023-05-31** fixed base Makefile,
+                  added OVRL overlay file format and error logging function,
+                  fixed version information
