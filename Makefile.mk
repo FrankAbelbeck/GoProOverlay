@@ -100,6 +100,7 @@ X264_PARAMS = -preset slow -tune film -crf 28
 endif
 
 PATTERN_IN_IMPLICIT = $(subst *,%,$(PATTERN_VIDEO_IN))
+FILES_RECODED = $(foreach FILE,$(wildcard $(PATTERN_VIDEO_IN)),$(FILE).mp4)
 
 .PHONY: audio video overlay
 
@@ -125,14 +126,14 @@ $(PATTERN_IN_IMPLICIT).mp4: $(PATTERN_IN_IMPLICIT)
 #
 # rule: create list of converted video chunks
 #
-$(NAME_VIDEO_OUT).files: $(PATTERN_VIDEO_IN).mp4
+$(NAME_VIDEO_OUT).files: $(FILES_RECODED)
 	@echo "creating concatenation file list - $^"
 	@$(foreach FILE,$^,echo "file $(PWD)/$(FILE)" >> "$(NAME_VIDEO_OUT).files";)
 
 #
 # rule: create output video by concatenating converted video chunks and adding mixed cockpit/intercom audio
 #
-$(NAME_VIDEO_OUT): $(PATTERN_VIDEO_IN).mp4 $(NAME_VIDEO_OUT).files
+$(NAME_VIDEO_OUT): $(FILES_RECODED) $(NAME_VIDEO_OUT).files
 	@echo "concatenating video $@"
 	@$(FFMPEG) -y \
 		-f concat \
