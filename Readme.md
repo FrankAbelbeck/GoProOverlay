@@ -246,3 +246,6 @@ filter expression. The example `Makefile` shows how to use it.
  * **2023-05-31** fixed base Makefile,
                   added OVRL overlay file format and error logging function,
                   fixed version information
+ * **2023-06-02** fixed adelay usage (ms instead of s),
+                  added float fraction parsing to audio offset parameter,
+                  renamed some Makefile variables (to avoid OFFSET vs OFFSETS)

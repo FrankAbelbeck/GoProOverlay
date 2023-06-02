@@ -16,10 +16,26 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
 
-STR_VERSION = "20230524"
+STR_VERSION = "20230602"
 
 import sys
 import argparse
+
+class FractFloat(float):
+	"""Subclass of float that accepts float fraction strings like "1.0/2.5".
+"""
+	def __new__(cls, x):
+		try:
+			strNum,strSlash,strDenom = x.partition("/")
+		except AttributeError as e:
+			fltX = x
+		else:
+			if strDenom:
+				fltX = float(strNum) / float(strDenom)
+			else:
+				fltX = float(strNum)
+		return super().__new__(cls, fltX)
+
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Generate a complex FFmpeg filter expression, mixing two audio tracks with defined volume adjusts, offsets, and tempo.")
@@ -40,8 +56,8 @@ if __name__ == "__main__":
 		default=0.0
 	)
 	parser.add_argument("--tempo",
-		help="Intercom audio stream tempo adjustment",
-		type=float,
+		help="Intercom audio stream tempo adjustment; accepts decimal point numbers as well as fractions like 5/4 or 1/0.5",
+		type=FractFloat,
 		default=1.0
 	)
 	parser.add_argument("--dojoin",
@@ -53,12 +69,12 @@ if __name__ == "__main__":
 	strOutput = f"[0:a] volume={args.volcockpit} [cockpit]; [1:a] volume={args.volintercom} "
 	
 	if args.offset > 0:
-		strOutput = strOutput + f", adelay={args.offset} "
+		strOutput = strOutput + f", adelay=delays={int(args.offset*1000)}:all=1 "
 	elif args.offset < 0:
 		strOutput = strOutput + f", aselect=gt(t\,{-args.offset}) "
 		
 	if args.tempo != 1:
-		strOutput = strOutput + f", atempo={args.tempo} "
+		strOutput = strOutput + f", atempo={float(args.tempo)} "
 	
 	if args.dojoin:
 		strOutput = strOutput + ", apad [intercom]; [cockpit][intercom] join=inputs=2:channel_layout=3.0:map=0.0-FL|0.1-FR|1.0-FC  [audio_muxed]"

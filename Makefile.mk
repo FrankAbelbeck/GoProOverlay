@@ -153,10 +153,10 @@ $(NAME_VIDEO_OUT).json: $(NAME_VIDEO_OUT)
 	@echo "converting telemetry data of $^"
 	@$(EXIFTOOL) -n -b -ee -G3 -json -api largefilesupport=1 "$(NAME_VIDEO_OUT)" | \
 	$(CONVERT_TELE) \
-		$(if $(SAMPLES),--samples "$(SAMPLES)") \
-		$(if $(INITIAL_ROW),--init "$(INITIAL_ROW)") \
-		$(if $(HDOP),--hdop $(HDOP) ) \
-		$(if $(MIN_SPEED),--minspeed $(MiN_SPEED) ) \
+		$(if $(TELE_SAMPLES),--samples "$(TELE_SAMPLES)") \
+		$(if $(TELE_INITIAL_ROW),--init "$(TELE_INITIAL_ROW)") \
+		$(if $(TELE_HDOP),--hdop $(TELE_HDOP) ) \
+		$(if $(TELE_MIN_SPEED),--minspeed $(TELE_MIN_SPEED) ) \
 		"$(NAME_VIDEO_OUT).json"
 
 #
@@ -198,17 +198,17 @@ ifndef NAME_AUDIO_INTERCOM
 		-c:a copy \
 		$(NAME_AUDIO_MIX)
 else
-	@echo "$(if $(DOJOIN),joining,mixing) audio tracks"
+	@echo "$(if $(AUDIO_DOJOIN),joining,mixing) audio tracks"
 	@$(FFMPEG) -y \
 		-i $(NAME_VIDEO_OUT) \
 		-i $(NAME_AUDIO_INTERCOM) \
 		-shortest \
 		-filter_complex "$(shell $(GEN_FILTER_AUDIOMIX) \
-			$(if $(VOLCOCKPIT),--volcockpit $(VOLCOCKPIT)) \
-			$(if $(VOLINTERCOM),--volintercom $(VOLINTERCOM)) \
-			$(if $(OFFSET),--offset $(OFFSET)) \
-			$(if $(TEMPO),--tempo $(TEMPO)) \
-			$(if $(DOJOIN),--dojoin))" \
+			$(if $(AUDIO_VOL_COCKPIT),--volcockpit $(AUDIO_VOL_COCKPIT)) \
+			$(if $(AUDIO_VOL_INTERCOM),--volintercom $(AUDIO_VOL_INTERCOM)) \
+			$(if $(AUDIO_OFFSET),--offset $(AUDIO_OFFSET)) \
+			$(if $(AUDIO_TEMPO),--tempo $(AUDIO_TEMPO)) \
+			$(if $(AUDIO_DOJOIN),--dojoin))" \
 		-map "[audio_muxed]" \
 		$(NAME_AUDIO_MIX)
 endif
