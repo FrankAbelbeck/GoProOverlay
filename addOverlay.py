@@ -20,7 +20,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #  https://github.com/imageio/imageio-ffmpeg
 #  https://pillow.readthedocs.io/en/stable/reference/Image.html
 
-STR_VERSION="20230529"
+STR_VERSION="20230709"
 
 # standard library modules
 import sys
@@ -32,8 +32,6 @@ import json
 import shlex
 import math
 import re
-import statistics
-import functools
 import types
 
 # external dependencies
@@ -51,6 +49,8 @@ class OverlayCommand:
 	"""Base class for all overlay commands.
 """
 	DCT_GLOBALS = {}
+	DCT_IMAGES = {}
+	DCT_FONTS = {}
 	STR_CWD = ""
 	
 	def __init__(self,strCmd,lstArgsAccepted=[]):
@@ -75,6 +75,84 @@ Args:
 		cls.DCT_GLOBALS = { }
 	
 	@classmethod
+	def clearFonts(cls):
+		"""Clear the class variable that maps filenames to PIL.ImageFont.ImageFont instances.
+"""
+		cls.DCT_FONTS = {}
+	
+	@classmethod
+	def clearImages(cls):
+		"""Clear the class variable that maps filenames to PIL.Image instances.
+"""
+		for key,value in cls.DCT_IMAGES:
+			try:
+				value.close()
+			except:
+				pass
+		cls.DCT_IMAGES = {}
+	
+	@classmethod
+	def getFont(cls,strFilename,intSizePx):
+		"""Get the PIL.ImageFont.ImageFont instance associated with given filename and size.
+
+If the combination of (strFilename,intSizePx) is not yet known, load and
+memorise truetype font.
+
+Args:
+   strFilename: a string, the font filename.
+   intSizePx: an integer, pixel size of the font to load.
+
+Returns:
+   A PIL.ImageFont.ImageFont instance associated with given filename/size combo.
+
+Raises:
+   ValueError: failed to load truetype file.
+"""
+		strFilename = cls.processFilename(strFilename)
+		try:
+			fontFilename = cls.DCT_FONTS[(strFilename,intSizePx)]
+		except KeyError:
+			try:
+				fontFilename = PIL.ImageFont.truetype(strFilename,intSizePx)
+			except OSError:
+				raise ValueError(f"failed to load TTF file '{strFilename}' with size {intSizePx} ({e})")
+			else:
+				cls.DCT_FONTS[(strFilename,intSizePx)] = fontFilename
+		return fontFilename
+	
+	@classmethod
+	def getImage(cls,strFilename,strMode="RGBA"):
+		"""Get the PIL.Image instance associated with given filename.
+
+If filename is not yet known, open image file and convert the resulting
+PIL.Image.Image instance to given mode.
+
+For valid modes, please refer to:
+   https://pillow.readthedocs.io/en/stable/handbook/concepts.html#concept-modes
+
+Args:
+   strFilename: a string, the image filename.
+   strMode: a string, the desired mode; default: "RGBA".
+
+Returns:
+   A PIL.Image.Image instance associated with given filename.
+
+Raises:
+   ValueError: failed to load image file.
+"""
+		strFilename = cls.processFilename(strFilename)
+		try:
+			imgFilename = cls.DCT_IMAGES[strFilename]
+		except KeyError:
+			try:
+				imgFilename = PIL.Image.open(strFilename)
+			except (ValueError,TypeError,FileNotFoundError,PIL.Image.UnidentifiedImageError,PIL.Image.DecompressionBombWarning,PIL.Image.DecompressionBombError) as e:
+				raise ValueError(f"failed to load image file '{strFilename}' ({e})") from e
+			else:
+				cls.DCT_IMAGES[strFilename] = imgFilename
+		return imgFilename.convert(strMode)
+	
+	@classmethod
 	def setCWD(cls,strFilename):
 		"""Set the current working directory to the directory of given filename.
 
@@ -97,7 +175,7 @@ Raises:
 		if strMod in sys.stdlib_module_names:
 			cls.DCT_GLOBALS[strMod] = importlib.import_module(strMod)
 		else:
-			raise ImportError("non-standard module '{strMod}'")
+			raise ImportError(f"non-standard module '{strMod}'")
 	
 	@classmethod
 	def processFilename(cls,strFilename):
@@ -141,7 +219,6 @@ Raises:
 					if dctTelemetry:
 						raise
 				except Exception as e:
-					print(self._strCmd,strArg,self.DCT_GLOBALS,dctTelemetry)
 					raise
 			if not dctTelemetry:
 				# if telemetry data is not present, update argument dictionary 
@@ -185,67 +262,15 @@ This is a prototype that does nothing. Subclasses have to re-implement it.
 
 Args:
    imgFrame: a PIL.Image instance.
-   drwFrame: a PIL.ImageDraw instance, preferable derived from imgFrame.
+   drwFrame: a PIL.ImageDraw instance, preferably derived from imgFrame.
 """
 		pass
 	
 	def __str__(self):
-		return f"""{self._strCmd} {", ".join([f"{key}={value}" for key,value in self._dctArgs.items()])}"""
+		return f"""{self._strCmd} {", ".join([f"{key}={value}" for key,value in self._dctArgsRuntime.items()])}"""
 
 
-class OverlayCommandGenericImage(OverlayCommand):
-	"""Class for generic image manipulation in overlays.
-
-This class manages a mapping of filenames to PIL.Image.Image instances
-in order to reduce memory usage and image object creation overhead.
-"""
-	DCT_IMAGES = {}
-	
-	@classmethod
-	def clearImages(cls):
-		"""Clear the class variable that maps filenames to PIL.Image instances.
-"""
-		for key,value in cls.DCT_IMAGES:
-			try:
-				value.close()
-			except:
-				pass
-		cls.DCT_IMAGES = {}
-	
-	@classmethod
-	def getImage(cls,strFilename,strMode="RGBA"):
-		"""Get the PIL.Image instance associated with given filename.
-
-If filename is not yet known, open image file and convert the resulting
-PIL.Image.Image instance to given mode.
-
-For valid modes, please refer to:
-   https://pillow.readthedocs.io/en/stable/handbook/concepts.html#concept-modes
-
-Args:
-   strFilename: a string, the image filename.
-   strMode: a string, the desired mode; default: "RGBA".
-
-Returns:
-   A PIL.Image.Image instance associated with given filename.
-
-Raises:
-   ValueError: failed to load image file.
-"""
-		strFilename = cls.processFilename(strFilename)
-		try:
-			imgFilename = cls.DCT_IMAGES[strFilename]
-		except KeyError:
-			try:
-				imgFilename = PIL.Image.open(strFilename).convert(strMode)
-			except (ValueError,TypeError,FileNotFoundError,PIL.Image.UnidentifiedImageError,PIL.Image.DecompressionBombWarning,PIL.Image.DecompressionBombError) as e:
-				raise ValueError(f"failed to load image file '{strFilename}' ({e})") from e
-			else:
-				cls.DCT_IMAGES[strFilename] = imgFilename
-		return imgFilename
-
-
-class OverlayCommandImage(OverlayCommandGenericImage):
+class OverlayCommandImage(OverlayCommand):
 	"""Class for an image load/modify/paste command.
 
 Shares image database of parent class.
@@ -253,7 +278,7 @@ Shares image database of parent class.
 	def __init__(self):
 		"""Constructor: initialise instance.
 """
-		super().__init__("image",["file","angle","pivot","move","size","alpha","mask"])
+		super().__init__("image",["file","angle","pivot","move","size","alpha","mask","resample"])
 	
 	def applyToFrame(self,imgFrame,drwFrame):
 		"""Apply command to given frame.
@@ -269,7 +294,7 @@ This carries out the following operations:
 
 Args:
    imgFrame: a PIL.Image instance.
-   drwFrame: a PIL.ImageDraw instance, preferable derived from imgFrame.
+   drwFrame: a PIL.ImageDraw instance, preferably derived from imgFrame.
 
 Raises:
    KeyError: no runtime values (you forgot to call evaluateArguments())
@@ -278,104 +303,253 @@ Raises:
 """
 		strFilename = self._dctArgsRuntime["file"]
 		tplSize     = self._dctArgsRuntime["size"]
-		floatAngle  = self._dctArgsRuntime["angle"]
+		fltAngle    = self._dctArgsRuntime["angle"]
 		tplPivot    = self._dctArgsRuntime["pivot"]
 		tplMove     = self._dctArgsRuntime["move"]
 		intAlpha    = self._dctArgsRuntime["alpha"]
 		strMask     = self._dctArgsRuntime["mask"]
+		strResample = self._dctArgsRuntime["resample"]
+		
+		match strResample:
+			case "nearest":
+				resampling = PIL.Image.Resampling.NEAREST
+			case "bicubic":
+				resampling = PIL.Image.Resampling.BICUBIC
+			case _:
+				resampling = PIL.Image.Resampling.BILINEAR
 		
 		imgPaste = self.getImage(strFilename)
-		try:
-			imgMask = self.getImage(strMask,"LA")
-		except (ValueError,TypeError):
+		if strMask is not None:
+			try:
+				imgMask = self.getImage(strMask,"L")
+			except (ValueError,TypeError):
+				imgMask = None
+		else:
 			imgMask = None
 		
 		if tplSize is not None:
-			imgPaste = imgPaste.resize(tplSize)
-			imgMask = imgMask.resize(tplSize)
+			imgPaste = imgPaste.resize(tplSize,resample=resampling)
 		
-		if floatAngle is not None and floatAngle != 0:
-			imgPaste = imgPaste.rotate(floatAngle,center=tplPivot,translate=tplMove)
-			tplMove = None
+		if fltAngle is not None and fltAngle != 0:
+			imgPaste = imgPaste.rotate(fltAngle,center=tplPivot,resample=resampling)
+		
+		if tplMove is None:
+			tplMove = (0,0)
 		
 		if intAlpha is not None and intAlpha != 255:
-			imgPaste.putalpha(intAlpha)
+			imgPaste = PIL.Image.blend(
+				PIL.Image.new("RGBA",imgPaste.size,"#00000000"),
+				imgPaste,
+				intAlpha
+			)
 		
-		imgFrame.paste(imgPaste,box=tplMove,mask=imgMask)
+		if imgMask is not None:
+			imgTmp1 = PIL.Image.new("RGBA",imgFrame.size,"#00000000")
+			imgTmp2 = imgTmp1.copy()
+			imgTmp2.paste(imgPaste,tplMove)
+			imgPaste = PIL.Image.composite(imgTmp1,imgTmp2,imgMask)
+			tplMove = (0,0)
+		
+		imgFrame.alpha_composite(imgPaste,dest=tplMove)
 
 
-class OverlayCommandText(OverlayCommand):
+class OverlayCommandDraw(OverlayCommand):
+	"""Generic class for drawing on a frame.
+
+This class manages mask application for drawing commands.
+"""
+	def __init__(self,strCmd=None,lstArgs=None):
+		"""Constructor: initialise instance.
+"""
+		if strCmd is None:
+			strCmd = "draw"
+		if lstArgs is None:
+			lstArgs = ["mask"]
+		elif "mask" not in lstArgs:
+			lstArgs.append("mask")
+		super().__init__(strCmd,lstArgs)
+	
+	def draw(self,imgFrame,drwFrame):
+		"""Do something with the given drawing context and/or image.
+
+This is a prototype for drawing doing nothing. You have to subclass
+and re-define this method.
+
+Args:
+   imgFrame: a PIL.Image instance.
+   drwFrame: a PIL.ImageDraw instance, preferably derived from imgFrame.
+"""
+		pass
+	
+	def applyToFrame(self,imgFrame,drwFrame):
+		"""Draw something (to be defined in method 'draw()' on given drawing context.
+
+Args:
+   imgFrame: a PIL.Image instance.
+   drwFrame: a PIL.ImageDraw instance, preferably derived from imgFrame.
+
+Raises:
+   KeyError: no runtime values (you forgot to call evaluateArguments())
+   Any exceptions PIL draw() might raise.
+"""
+		imgMask = self._dctArgsRuntime["mask"]
+		if imgMask is not None:
+			try:
+				imgMask = self.getImage(imgMask).resize(imgFrame.size)
+			except (ValueError,TypeError):
+				imgMask = None
+		
+		if imgMask is None:
+			self.draw(imgFrame,drwFrame)
+		else:
+			imgTmp1 = PIL.Image.new("RGBA",imgFrame.size,"#00000000")
+			imgTmp2 = imgTmp1.copy()
+			drwTmp = PIL.ImageDraw.Draw(imgTmp)
+			self.draw(imgTmp.drwTmp)
+			imgTmp1 = PIL.Image.composite(imgTmp2,imgTmp1,imgMask)
+			imgFrame.alpha_composite(imgTmp)
+
+
+class OverlayCommandText(OverlayCommandDraw):
 	"""Class for printing text on a frame.
 
 This class manages a mapping of filenames to PIL.ImageFont.ImageFont instances
 in order to reduce memory usage and font object creation overhead.
 
 """
-	DCT_FONTS = {}
-	
 	def __init__(self):
 		"""Constructor: initialise instance.
 """
-		super().__init__("print",["text","position","anchor","align","font","size","colour","mask"])
+		super().__init__("print",["text","position","anchor","align","font","size","fillColour","spacing","strokeWidth","strokeColour","embeddedColor","mask"])
 	
-	@classmethod
-	def clearFonts(cls):
-		"""Clear the class variable that maps filenames to PIL.ImageFont.ImageFont instances.
-"""
-		cls.DCT_FONTS = {}
-	
-	@classmethod
-	def getFont(cls,strFilename,intSizePx):
-		"""Get the PIL.ImageFont.ImageFont instance associated with given filename and size.
-
-If the combination of (strFilename,intSizePx) is not yet known, load and
-memorise truetype font.
-
-Args:
-   strFilename: a string, the font filename.
-   intSizePx: an integer, pixel size of the font to load.
-
-Returns:
-   A PIL.ImageFont.ImageFont instance associated with given filename/size combo.
-
-Raises:
-   ValueError: failed to load truetype file.
-"""
-		strFilename = cls.processFilename(strFilename)
-		try:
-			fontFilename = cls.DCT_FONTS[(strFilename,intSizePx)]
-		except KeyError:
-			try:
-				fontFilename = PIL.ImageFont.truetype(strFilename,intSizePx)
-			except OSError:
-				raise ValueError(f"failed to load TTF file '{strFilename}' with size {intSizePx} ({e})")
-			else:
-				cls.DCT_FONTS[(strFilename,intSizePx)] = fontFilename
-		return fontFilename
-	
-	def applyToFrame(self,imgFrame,drwFrame):
+	def draw(self,imgFrame,drwFrame):
 		"""Draw text on given drawing context.
 
 Args:
    imgFrame: a PIL.Image instance.
-   drwFrame: a PIL.ImageDraw instance, preferable derived from imgFrame.
+   drwFrame: a PIL.ImageDraw instance, preferably derived from imgFrame.
 
 Raises:
    KeyError: no runtime values (you forgot to call evaluateArguments())
    ValueError: loading font failed.
    Any exceptions PIL might raise in text().
 """
+		intSpacing = self._dctArgsRuntime["spacing"]
+		if not isinstance(intSpacing,int):
+			intSpacing = 4
+		
+		intStrokeWidth = self._dctArgsRuntime["strokeWidth"]
+		if not isinstance(intSpacing,int):
+			intStrokeWidth = 0
+		
+		varColour = self._dctArgsRuntime["fillColour"]
+		varStrokeFill = self._dctArgsRuntime["strokeColour"]
+		if varStrokeFill is None:
+			varStrokeFill = varColour
+			intStrokeWidth = 0
+		
+		boolEmbeddedColour = self._dctArgsRuntime["embeddedColor"]
+		if not isinstance(boolEmbeddedColour,bool):
+			boolEmbeddedColour = False
+		
 		drwFrame.text(
-			self._dctArgsRuntime["position"],
-			self._dctArgsRuntime["text"],
-			self._dctArgsRuntime["colour"],
-			self.getFont(self._dctArgsRuntime["font"],self._dctArgsRuntime["size"]),
-			anchor=self._dctArgsRuntime["anchor"],
-			align=self._dctArgsRuntime["align"]
+			xy             = self._dctArgsRuntime["position"],
+			text           = self._dctArgsRuntime["text"],
+			fill           = varColour,
+			font           = self.getFont(self._dctArgsRuntime["font"],self._dctArgsRuntime["size"]),
+			anchor         = self._dctArgsRuntime["anchor"],
+			align          = self._dctArgsRuntime["align"],
+			spacing        = intSpacing,
+			stroke_width   = intStrokeWidth,
+			stroke_fill    = varStrokeFill,
+			embedded_color = boolEmbeddedColour
 		)
 
 
-class OverlayCommandMask(OverlayCommandGenericImage):
+class OverlayCommandArc(OverlayCommandDraw):
+	"""Class for drawing an arc on a frame.
+
+This class manages a mapping of filenames to PIL.ImageFont.ImageFont instances
+in order to reduce memory usage and font object creation overhead.
+
+"""
+	
+	def __init__(self):
+		"""Constructor: initialise instance.
+"""
+		super().__init__("arc",["origin","radius","start","end","strokeColour","strokeWidth","mask"])
+	
+	def draw(self,imgFrame,drwFrame):
+		"""Draw an arc on given drawing context.
+
+Args:
+   imgFrame: a PIL.Image instance.
+   drwFrame: a PIL.ImageDraw instance, preferably derived from imgFrame.
+
+Raises:
+   KeyError: no runtime values (you forgot to call evaluateArguments())
+   ValueError: loading font failed.
+   Any exceptions PIL might raise in text().
+"""
+		# tplBBox = (left,upper,right,down) calc from origin and radius
+		x,y = self._dctArgsRuntime["origin"]
+		r = self._dctArgsRuntime["radius"]
+		drwFrame.arc(
+			xy    = (x-r, y-r, x+r, y+r),
+			start = self._dctArgsRuntime["start"],
+			end   = self._dctArgsRuntime["end"],
+			fill  = self._dctArgsRuntime["strokeColour"],
+			width = self._dctArgsRuntime["strokeWidth"]
+		)
+
+
+class OverlayCommandRect(OverlayCommandDraw):
+	"""Class for drawing an arc on a frame.
+
+This class manages a mapping of filenames to PIL.ImageFont.ImageFont instances
+in order to reduce memory usage and font object creation overhead.
+
+"""
+	
+	def __init__(self):
+		"""Constructor: initialise instance.
+"""
+		super().__init__("rect",["topLeft","bottomRight","radius","corners","fillColour","strokeColour", "strokeWidth","mask"])
+	
+	def draw(self,imgFrame,drwFrame):
+		"""Draw a rectangle on given drawing context.
+
+Args:
+   imgFrame: a PIL.Image instance.
+   drwFrame: a PIL.ImageDraw instance, preferably derived from imgFrame.
+
+Raises:
+   KeyError: no runtime values (you forgot to call evaluateArguments())
+   ValueError: loading font failed.
+   Any exceptions PIL might raise in text().
+"""
+		# tplBBox = (left,upper,right,down) calc from origin and radius
+		x0,y0 = self._dctArgsRuntime["topLeft"]
+		x1,y1 = self._dctArgsRuntime["bottomRight"]
+		r = self._dctArgsRuntime["radius"]
+		if r is None:
+			r = 0
+		try:
+			cTopLeft,cTopRight,cBottomRight,cBottomLeft = self._dctArgsRuntime["corners"]
+			corners = (cTopLeft,cTopRight,cBottomRight,cBottomLeft)
+		except:
+			corners = None
+		drwFrame.rounded_rectangle(
+			xy      = (x0,y0,x1,y1),
+			radius  = r,
+			corners = corners,
+			fill    = self._dctArgsRuntime["fillColour"],
+			outline = self._dctArgsRuntime["strokeColour"],
+			width   = self._dctArgsRuntime["strokeWidth"]
+		)
+
+
+class OverlayCommandMask(OverlayCommand):
 	"""Class for a mask command.
 
 Shares image database of parent class.
@@ -389,22 +563,25 @@ Shares image database of parent class.
 	def applyToFrame(self,imgFrame,drwFrame):
 		"""Apply command to given frame.
 
-This carries out the following operations:
+Paste a black transparent frame to the current frame, using the given mask.
 
- 1) Load mask image and resize to frame size.
- 2) Set alpha channel of imgFrame to this mask image.
+This will erase all areas that are set to 255 in the (grayscale) mask image,
+and will keep all areas that are set to 0 in the mask. Intermediate mask values
+will result in partially erased pixels.
 
 Args:
    imgFrame: a PIL.Image instance.
-   drwFrame: a PIL.ImageDraw instance, preferable derived from imgFrame.
+   drwFrame: a PIL.ImageDraw instance, preferably derived from imgFrame.
 
 Raises:
    KeyError: no runtime values (you forgot to call evaluateArguments())
-   ValueError: loading image failed.
+   ValueError, TypeError: loading image failed.
    Any exceptions PIL might raise in resize(), or putalpha().
 """
-		imgMask = self.getImage(self._dctArgsRuntime["file"]).resize(imgFrame.size)
-		imgFrame.putalpha(imgMask)
+		imgFrame.paste(
+			PIL.Image.new("RGBA",imgFrame.size,"#00000000"),
+			self.getImage(self._dctArgsRuntime["file"],"L").resize(imgFrame.size)
+		)
 
 
 class Overlay:
@@ -420,6 +597,13 @@ either as a JSON list of command lists or as an OVRL text file.
 	#  1: identifier
 	#  2: rest of line, starting with first non-whitespace character
 	RE_TOKENISER = re.compile(r'''^(\t?)([\w]+)[\s]*(.*)$''',re.M)
+	DCT_COMMANDS = {
+		"image" : OverlayCommandImage,
+		"print" : OverlayCommandText,
+		"mask"  : OverlayCommandMask,
+		"arc"   : OverlayCommandArc,
+		"rect"  : OverlayCommandRect
+	}
 	
 	def __init__(self,fFileOverlay,strErrLog="last"):
 		"""Constructor: initialise an instance.
@@ -474,51 +658,8 @@ defined command.
 Except for the 'uses' command, all expression strings will be compiled and
 evaluated, so that every parameter can be tuned by telemetry data at runtime.
 
-Since this empoys 'eval', you are free to shoot your own foot. Be cautious!
+Since this employs 'eval', you are free to shoot your own foot. Be cautious!
 Any modules beyond builtins have to be imported explicitly with 'uses'.
-
-
-Command: module import
-
-   uses mod0 [, mod1, ...]
-
-Request that given modules are loaded into the overlay's runtime scope;
-mod0..mod1 specify module name strings.
-
-
-Command: image pasting
-
-   image
-      file  expression_string
-      size  expression_2tuple_of_integers
-      angle expression_float
-      pivot expression_2tuple_of_integers
-      move  expression_2tuple_of_integers
-      alpha expression_integer
-      
-Request that the image at given path is alpha-composited onto the frame,
-optionally resizing size=(w,h), rotating angle degrees around pivot=(x,y),
-moving move=(x,y) and alpha-blending it.
-
-
-Command: text printing
-
-   print
-      text     expression_string
-      position expression_2tuple_of_integers
-      anchor   expression_string
-      align    expression_string
-      font     expression_string
-      size     expression_integer
-      colour   expression_string
-
-Request that text is drawn onto the frame at a position with given
-anchor (cf [1]), alignment ("left","center","right"), using given truetype font
-file and pixel size, drawing in given colour (cf. [2])
-
-[1] https://pillow.readthedocs.io/en/stable/handbook/text-anchors.html
-[2] https://pillow.readthedocs.io/en/stable/reference/ImageColor.html
-
 
 Args:
    fOvrl: a file-like object.
@@ -546,30 +687,27 @@ Raises:
 				# un-indented line: new command; finalise current command (if given)
 				if cmdOverlay is not None:
 					lstCommands.append(cmdOverlay)
-				match strIdentifier:
-					case "uses":
-						# declare required python modules
-						# syntax: 'uses name[,name,...]
-						for strMod in strExpression.split(","):
-							try:
-								OverlayCommand.addModule(strMod.strip())
-							except ImportError as e:
-								self.warn(f'module import error ({e})')
-					case "image":
-						cmdOverlay = OverlayCommandImage()
-					case "print":
-						cmdOverlay = OverlayCommandText()
-					case "mask":
-						cmdOverlay = OverlayCommandMask()
-					case _:
-						self.warn("unkown command '{strIdentifier}'")
+				if strIdentifier == "uses":
+					# declare required python modules
+					# syntax: 'uses name[,name,...]
+					for strMod in strExpression.split(","):
+						try:
+							OverlayCommand.addModule(strMod.strip())
+						except ImportError as e:
+							self.warn(f'module import error ({e})')
+				else:
+					try:
+						cmdOverlay = self.DCT_COMMANDS[strIdentifier]()
+					except KeyError:
+						cmdOverlay = None
+						self.warn(f"unkown command '{strIdentifier}'")
 				
-				# copy arguments from most recent command of same type
-				# (define args once, re-use until redefined)
-				for cmdOverlayRecent in lstCommands[::-1]:
-					if isinstance(cmdOverlayRecent,type(cmdOverlay)):
-						cmdOverlay.copyArguments(cmdOverlayRecent)
-						break
+#				# copy arguments from most recent command of same type
+#				# (define args once, re-use until redefined)
+#				for cmdOverlayRecent in lstCommands[::-1]:
+#					if isinstance(cmdOverlayRecent,type(cmdOverlay)):
+#						cmdOverlay.copyArguments(cmdOverlayRecent)
+#						break
 			else:
 				# indented line: new argument, add to current command
 				if cmdOverlay is not None:
@@ -710,9 +848,9 @@ Args:
    excError: the exception that triggered this method call.
 """
 		if self._strErrLog == "all":
-			self._dctErrors.setdefault((cmdOverlay,strOperation),[]).append((excError,dctTelemetry))
+			self._dctErrors.setdefault((cmdOverlay,strOperation),[]).append(excError)
 		else:
-			self._dctErrors[(cmdOverlay,strOperation)] = [(excError,dctTelemetry)]
+			self._dctErrors[(cmdOverlay,strOperation)] = [excError]
 	
 	def getErrorLog(self):
 		return self._dctErrors
@@ -722,10 +860,8 @@ Args:
 			with open(strFilename,"w") as f:
 				for (cmdOvr,strOp),value in self._dctErrors.items():
 					f.write(f"{strOp} {cmdOvr}:\n")
-					for excErr,dctTele in value:
+					for excErr in value:
 						f.write(f"\tError: {excErr!r}\n")
-						for key,value in dctTele.items():
-							f.write(f"\t{key} = {value!r}\n")
 	
 	def apply(self,frame,tplSize,dctTelemetry):
 		"""Apply all Overlay commands to a given frame of given size.
@@ -778,86 +914,44 @@ class Telemetry:
 Telemetry data is expected to be of the following form:
 
 {
-	"headings": ["heading0", ..., "headingN"],
-	"rows" : [
-		[field0, ..., fieldN]
-		...
-	],
-	"min": [field0, ..., fieldN],
-	"max": [field0, ..., fieldN]
+	"key": [value0, ..., valueN],
+	...
 }
 """
-	
-	MAP_STATISTICS_METHOD = {
-		"median": statistics.median,
-		"mean": statistics.mean,
-		"gmean": statistics.geometric_mean,
-		"hmean": statistics.harmonic_mean,
-		"mode": statistics.mode,
-		"multimodemax": lambda x: max(statistics.multimode(x)),
-		"multimodemin": lambda x: min(statistics.multimode(x)),
-		"multimodemean": lambda x: statistic.mean(statistics.multimode(x)),
-		"multimodemedian": lambda x: statistics.median(statistics.multimode(x)),
-		None: statistics.median
-	}
-	
-	RE_OFFSET = re.compile(r'''(.+?)=(.+?):([0-9]*)-([0-9]*)(:(.+?))?''')
 	
 	def __init__(self, fJSON, fltFps, intNumFrames):
 		"""Constructor: initialise instance.
 
 Args:
    fJSON: a file-like object; telemetry data in JSON format.
-   fltFps: a float, number of frames per seconds.
-   intNumFrames: an integer, total number of expected frames.
 
 Raises:
    TypeError, ValueError: invalid framerate.
    json.JSONDecodeError: invalid JSON input.
 """
+		self._fltFps = fltFps
+		self._intNumFrames = intNumFrames
 		self._dctTele = {}
-		self._dctHeadings = {}
-		self._lstIdxFrameRow = []
-		self.load(fJSON,fltFps,intNumFrames)
+		self.load(fJSON)
 	
-	@classmethod
-	def statisticsMethods(cls):
-		return [k for k in cls.MAP_STATISTICS_METHOD.keys() if k is not None]
-	
-	def load(self, fJSON, fltFps, intNumFrames):
+	def load(self, fJSON):
 		"""Load telemetry data from given JSON file.
+
+Assumptions:
+	1) data is given as a dictionary
+	2) each dictionary key is a data name string
+	3) each dictionary entry is a list of values
+	4) all value lists have the same length (=framerate*duration=frame number)
 
 Args:
    fJSON: a file-like object.
-   fltFps: a float, expected framerate.
-   intNumFrames: an integer, total number of expected frames.
 
 Raises:
+   KeyError,TypeError: invalid JSON data.
    json.JSONDecodeError: invalid JSON input.
 """
-		self._lstOffsets = {}
-		
-		# load JSON data structure and create a mapping heading -> column index
+		# load JSON data
 		self._dctTele = json.load(fJSON)
-		self._dctHeadings = {strKey:intIdx for intIdx,strKey in enumerate(self._dctTele["headings"])}
-		
-		intIdxTimestamp = self._dctHeadings["Timestamp"]
-		intIdxDuration = self._dctHeadings["Duration"]
-		
-		intIdxRow = 0
-		fltTimestampRow = self._dctTele["rows"][0][intIdxTimestamp]
-		fltDurationRow = self._dctTele["rows"][0][intIdxDuration]
-		# create a mapping structure, mapping frame number to row and row fraction
-		self._lstIdxFrameRow = []
-		for intIdxFrame in range(intNumFrames):
-			fltTimestamp = intIdxFrame / fltFps
-			while fltTimestamp > fltTimestampRow + fltDurationRow:
-				intIdxRow = intIdxRow + 1
-				fltTimestampRow = self._dctTele["rows"][intIdxRow][intIdxTimestamp]
-				fltDurationRow = self._dctTele["rows"][intIdxRow][intIdxDuration]
-			self._lstIdxFrameRow.append( (intIdxRow, (fltTimestamp - fltTimestampRow) / fltDurationRow) )
-		# create timestamp vector for quick offset look-up
-		self._lstTimestamps = [(lstRow[intIdxTimestamp],lstRow[intIdxDuration]) for lstRow in self._dctTele["rows"]]
 	
 	def get(self,intIdxFrame):
 		"""Get telemetry data of the current frame and advance the internal pointers.
@@ -865,93 +959,19 @@ Raises:
 Returns:
    A dictionary, mapping all field names (as given in 'headings' to values).
 """
-		# get row index that is minimal distant to the given fltTimestamp
-		# pre-compiled in load(), so this is just a look-up of the frame index in _lstIdxFrameRow
-		intIdx,fltSub = self._lstIdxFrameRow[intIdxFrame]
 		dctReturn = {}
-		for intIdxCol,value in enumerate(self._dctTele["rows"][intIdx]):
-			try:
-				# assume value is a sequence; interpolate using the pre-compiled index fraction
-				dctReturn[self._dctTele["headings"][intIdxCol]] = value[int(len(value) * fltSub)]
-			except TypeError:
-				# value is not a sequence (e.g. gyro), so don't interpolate and just use the raw value
-				dctReturn[self._dctTele["headings"][intIdxCol]] = value
+		try:
+			for strKey,lstData in self._dctTele.items():
+				dctReturn[strKey] = lstData[intIdxFrame]
+				dctReturn["_"+strKey] = lstData[:intIdxFrame]
+				dctReturn[strKey+"_"] = lstData[intIdxFrame+1:]
+		except IndexError:
+			pass
+		else:
+			dctReturn["Framerate"] = self._fltFps
+			dctReturn["FrameIndex"] = intIdxFrame
+			dctReturn["NumberFrames"] = self._intNumFrames
 		return dctReturn
-	
-	def addOffset(self,strOffset):
-		#
-		# parse strValue K=V:T0-T1:M
-		#
-		try:
-			strKey,strValue,strT0,strT1,strMethodAll,strMethod = self.RE_OFFSET.fullmatch(strOffset).groups()
-		except re.error as e:
-			raise ValueError(f"argument parsing failed: {e}")
-		
-		try:
-			intIdxKey = self._dctHeadings[strKey]
-		except KeyError:
-			raise ValueError("unknonw column name")
-		
-		try:
-			fltValue = float(strValue)
-		except (TypeError,ValueError) as e:
-			raise ValueError(f"converting value failed: {e}")
-		
-		if strT0:
-			try:
-				fltT0 = float(strT0)
-			except (TypeError,ValueError) as e:
-				raise ValueError(f"converting timestamp 0 failed: {e}")
-		else:
-			fltT0 = float("-infinity")
-		
-		if strT1:
-			try:
-				fltT1 = float(strT1)
-			except (TypeError,ValueError) as e:
-				raise ValueError(f"converting timestamp 1 failed: {e}")
-		else:
-			fltT1 = float("+infinity")
-		
-		if fltT0 > fltT1:
-			fltT0,fltT1 = fltT1,FltT0
-		
-		try:
-			funMethod = self.MAP_STATISTICS_METHOD[strMethod]
-		except KeyError:
-			raise ValueError("invalid method")
-		
-		# iterate over rows, collect values for given timeframe,
-		# determine central tendency, calculate offset, apply offset to all values
-		lstValues = []
-		for intIdx,(fltT,fltD) in enumerate(self._lstTimestamps):
-			if fltT >= fltT0 and fltT < fltT1 + fltD:
-				try:
-					# assume vector value...
-					lstValues.extend([v for v in self._dctTele["rows"][intIdx][intIdxKey] if v is not None])
-				except TypeError:
-					# just append if not iterable
-					if self._dctTele["rows"][intIdx][intIdxKey] is not None:
-						lstValues.append(self._dctTele["rows"][intIdx][intIdxKey])
-		
-		fltOffset = fltValue - funMethod(lstValues)
-		print(f"applying offset {fltOffset} to column '{strKey}'")
-		
-		# apply offset to all values
-		for lstRow in self._dctTele["rows"]:
-			try:
-				# assume vector value...
-				for intIdxVal,fltVal in enumerate(lstRow[intIdxKey]):
-					try:
-						lstRow[intIdxKey][intIdxVal] = lstRow[intIdxKey][intIdxVal] + fltOffset
-					except TypeError:
-						pass # ignore None
-			except TypeError:
-				# ...just add offset
-				try:
-					lstRow[intIdxKey] = lstRow[intIdxKey] + fltOffset
-				except TypeError:
-					pass # ignore None
 
 
 if __name__ == "__main__":
@@ -997,16 +1017,6 @@ if __name__ == "__main__":
 		help="Number of seconds between updating the progress output (default: 5)",
 		type=int,
 		default=5
-	)
-	parser.add_argument("--offset",
-		metavar="K=V:T0-T1:M",
-		help="Calculate offset of all values of column named K in given timeframe T0 to T1 (given in seconds) from expected value V. "
-			"Use the method M (default: median) to get obtain the central tendency of all measured values. "
-			"If T0 is empty, the minimal timestamp is used. "
-			"If T1 is empty, the maximal timestamp is used. "
-			"Valid statistics methods: " + ", ".join(Telemetry.statisticsMethods()),
-		action="append",
-		default=[]
 	)
 	parser.add_argument("--duration",
 		help="Limit duration of the input video file to DURATION seconds (default: no limit)",
@@ -1078,7 +1088,7 @@ Parsing overlay file {args.OVERLAY.name}...""")
 	# parse overlay definition JSON file
 	try:
 		ovr = Overlay(args.OVERLAY,args.errlog)
-	except json.JSONDecodeError as e:
+	except SyntaxError as e:
 		print(f"""   parsing failed: {e}""")
 		sys.exit(1)
 
@@ -1089,12 +1099,6 @@ Parsing overlay file {args.OVERLAY.name}...""")
 	except json.JSONDecodeError as e:
 		print(f"""   parsing failed: {e}""")
 		sys.exit(1)
-	
-	for strOffset in args.offset:
-		try:
-			tele.addOffset(strOffset)
-		except ValueError as e:
-			print(f"ignoring invalid argument '--offset {strOffset}' ({e})",file=sys.stderr)
 	
 	# 20230518: take duration and start argument into account to calculate frames-to-skip and total number of frames
 	# reader has to decode from the start because of audio track

@@ -23,6 +23,9 @@ import json
 import sys
 import csv
 import datetime
+import math
+
+PI2 = math.pi * 2
 
 if __name__ == "__main__":
 	parser = argparse.ArgumentParser(description="Read telemetry JSON data (from convertTelemetry.py), and write GPS data as unicsv to stdout (suitable as stdin for gpsbabel).")
@@ -34,11 +37,10 @@ if __name__ == "__main__":
 	args = parser.parse_args()
 	
 	# read JSON data from stdin
-	dctIn = json.load(args.FILE)
 	try:
-		dctHdg = {strKey:intIdx for intIdx,strKey in enumerate(dctIn["headings"])}
-	except KeyError:
-		print("invalid telemetry JSON file (no headings)",file=sys.stderr)
+		dctIn = json.load(args.FILE)
+	except json.JSONDecodeError as e:
+		print(f"error loading telemetry JSON file ({e})",file=sys.stderr)
 	else:
 		writer = csv.writer(sys.stdout)
 		writer.writerow((
@@ -47,22 +49,17 @@ if __name__ == "__main__":
 			"lat",
 			"lon",
 			"alt",
-			"head",
 			"speed",
 			"hdop"
 		))
-		for lstRow in dctIn["rows"]:
-			dt = datetime.datetime.utcfromtimestamp(lstRow[dctHdg["TimeGPS"]])
-			try:
-				writer.writerow((
-					dt.strftime("%Y/%m/%d"),
-					dt.strftime("%H:%M:%S.%f"),
-					float(lstRow[dctHdg["Latitude"]]),
-					float(lstRow[dctHdg["Longitude"]]),
-					float(lstRow[dctHdg["Altitude"]]),
-					float(lstRow[dctHdg["TrueCourse"]]),
-					float(lstRow[dctHdg["GPSSpeed2D"]]),
-					float(lstRow[dctHdg["HorizontalError"]]),
-				))
-			except (TypeError,ValueError):
-				pass # ignore bad GPS data
+		for intIdx,fltTime in enumerate(dctIn["Timestamp"]):
+			dt = datetime.datetime.utcfromtimestamp(fltTime)
+			writer.writerow((
+				dt.strftime("%Y/%m/%d"),
+				dt.strftime("%H:%M:%S.%f"),
+				dctIn["Latitude"][intIdx],
+				dctIn["Longitude"][intIdx],
+				dctIn["Altitude"][intIdx],
+				dctIn["GPSSpeed2D"][intIdx],
+				dctIn["GPSHorizontalError"][intIdx]
+			))

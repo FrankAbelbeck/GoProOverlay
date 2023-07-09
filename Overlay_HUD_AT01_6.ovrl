@@ -1,0 +1,123 @@
+# Frank Abelbeck GoPro Telemetry Overlay Toolset: Overlay theme file
+# Copyright (C) 2023 Frank Abelbeck <frank@abelbeck.info>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+#
+# Overlay theme file for HUD-like telemetry display
+# speeds are marked for the AT01 (Aquila A211G) airplane
+#
+
+uses datetime,math
+
+image
+	file "Overlay_HUD_AT01_6_tc.png"
+	angle 0.0 if TrueCourse is None else math.degrees(TrueCourse) % 360
+	move 640,1000
+
+# Overlay_HUD_AT01_6_speed.png:
+#
+#     speed    =>   move
+#  ------------------------------
+#     165           31,528
+#     164           31,516
+#     160           31,468
+#     0             31,-1452
+#
+# => y = 528 -12*(165-KIAS)
+
+image
+	file "Overlay_HUD_AT01_6_speed.png"
+	move 31, -1452 if GPSSpeed3D is None else 528 - int(12*(165 - GPSSpeed3D*3600/1852))
+
+# Overlay_HUD_AT01_6_alt.png:
+#
+#     alt     =>   move
+#  ------------------------------
+#    13000         1854,528
+#    12900         1854,516
+#    12500         1854,468
+#        0         1854,-1032
+#    -1000         1854,-1152
+#
+# => y = 528 - 0.12*(13000-ALT)
+
+image
+	file "Overlay_HUD_AT01_6_alt.png"
+	move 1854,-1026 if Altitude is None else 528 - int(0.12*(13000 - Altitude / 0.3048))
+
+mask
+	file "Overlay_HUD_AT01_6_mask.png"
+
+# arc indicating turn rate
+arc
+	origin        960,1320
+	radius        333
+	start         -90 if TurnRate > 0 else -90 + 20 * math.degrees(TurnRate) / 3
+	end           -90 if TurnRate < 0 else -90 + 20 * math.degrees(TurnRate) / 3
+	strokeColour  "#ff00ffa0"
+	strokeWidth   8
+
+rect
+	topLeft      1892, 540 - max(20*math.degrees(GPSPitch),0)
+	bottomRight  1898, 540 - min(20*math.degrees(GPSPitch),0)
+	fillColour   '#ff00ff'
+
+image
+	file "Overlay_HUD_AT01_6_fg.png"
+
+print
+	text '---' if TrueCourse is None else f'TC {math.degrees(TrueCourse):03.0f}'
+	position   960,1056
+	anchor     "mm"
+	align      "center"
+	font       "~/.fonts/Topic.ttf"
+	size       30
+	fillColour "#ffffff"
+
+print
+	text '---' if GPSSpeed3D is None else f'{int(GPSSpeed3D * 3600 / 1852)} kt'
+	position   74,540
+	anchor     "rm"
+	align      "center"
+	font       "~/.fonts/Topic.ttf"
+	size       30
+	fillColour "#ffff00" if GPSSpeed3D > 66 or GPSSpeed3D < 20 else "#ffffff" if GPSSpeed3D < 46 else "#00ff00"
+
+print
+	text '---' if Altitude is None else f'{int(Altitude / 0.3048)} ft'
+	position   1908,540
+	anchor     "rm"
+	align      "center"
+	font       "~/.fonts/Topic.ttf"
+	size       30
+	fillColour "#ffffff"
+
+print
+	text '---' if GPSTime is None else datetime.datetime.utcfromtimestamp(GPSTime).strftime('%Y-%m-%d T %H:%M Z')
+	position   640,1056
+	anchor     "mm"
+	align      "center"
+	font       "~/.fonts/Topic.ttf"
+	size       30
+	fillColour "#ffffff"
+
+print
+	text       f'Distance {int(sum([i for i in _DistanceStep if i is not None]) / 1852)} NM'
+	position   1280,1056
+	anchor     "mm"
+	align      "center"
+	font       "~/.fonts/Topic.ttf"
+	size       30
+	fillColour "#ffffff"

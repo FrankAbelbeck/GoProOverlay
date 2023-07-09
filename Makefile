@@ -14,7 +14,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-
 # output file names
 # might be combined with other custom variables like this prefix
 PREFIX = 20230414_DEABC_Start-Ziel
@@ -23,7 +22,7 @@ PREFIX = 20230414_DEABC_Start-Ziel
 NAME_VIDEO_OUT_OVERLAY = $(PREFIX)_overlay.mp4
 
 # name of the intercom recording audio file
-NAME_AUDIO_INTERCOM = $(PREFIX)_Intercom_HHMMSSZ.wav
+NAME_AUDIO_INTERCOM = /path/to/audio/recording/file
 
 # name of the mixed audio file
 NAME_AUDIO_MIX = $(PREFIX)_Mix.aac
@@ -31,60 +30,43 @@ NAME_AUDIO_MIX = $(PREFIX)_Mix.aac
 # name of the raw (compressed, concated) video file
 NAME_VIDEO_OUT = $(PREFIX).mp4
 
+# filename of the Overlay file to use
+OVERLAY = /path/to/Overlay.json
 
-# input file names
 # pattern of all input files (ie files from the GoPro)
 # will be expanded during processing to $(PATTERN).json (telemetry) and $(PATTERN).mp4 (overlay-added video file)
 PATTERN_VIDEO_IN = GX*.MP4
 
+# audio mixing parameters:
+#AUDIO_OFFSET       = 10.5
+#AUDIO_TEMPO        = 5760/5760.35
+#AUDIO_VOL_COCKPIT  = 0.1
+#AUDIO_VOL_INTERCOM = 2
+#AUDIO_DOJOIN       = True
 
-# filename of the Overlay file to use
-OVERLAY = /path/to/Overlay.json
+# telemetry processing parameters:
+#TELE_OFFSETS = Altitude=5.7912:0-540 Altitude=5.7912:1780-
+#TELE_HDOP = 5
+#TELE_MIN_SPEED = 1
+#TELE_GRAV = "XZY"
+#TELE_QUAT = "RXZY"
+#TELE_EULER = "ZYX"
+#TELE_CAL_GRAV = 0-60
+#TELE_NO_TC_MATCH = 1
+#TELE_NO_RP_ZERO = 1
 
-
-# audio mixing parameters: OFFSET (+-secs), TEMPO (+-), VOLCOCKPIT (0..), VOLINTERCOM (0..),  DOJOIN (if non-empty, join audio to 3.0 instead of 2.0)
-OFFSET      = -1.23
-VOLCOCKPIT  = 0.5
-VOLINTERCOM = 2
-DOJOIN = True
-
-# telemetry processing parameter:
-#   SAMPLES: if non-empty, defines the number of samples interpolated from sequence-type telemetry values
-#            if undefined, defaults to framerate
-#   OFFSETS: space-separated list of values passed via --offset arguments to addOverlay.py; Key=Value:TStart-TEnd[:Method]
-#            default: none
-#   HDOP: horizontal dilution of precision value used during telemetry conversion
-#         default: 10
-#   MIN_SPEED: set a minimum GPS speed (m/s) that needs to be reached to calculate true course and rate of descend
-#              default: 1
-#   INITIAL_ROW: JSON dictionary of initial values used during telemetry conversion
-#   TQS: set thread_queue_size for reading frames (default: 1024)
-#   TPRINT: set number of seconds between addOverlay.py progress updates
-#           default: 5
-#SAMPLES = 50
-#OFFSETS = Altitude=4.2672:0-790 Altitude=0.9144:2966-
-#HDOP = 5
-#MIN_SPEED = 1
-#INITIAL_ROW = { "Distance": 0.0 }
+# overlay processing parameters:
 #TQS = 1024
 #TPRINT = 5
 
-# addOverlay parameters
-#   DURATION: set duration of the overlay video file in seconds (default: no limit)
-#   START: start encoding at timestamp START, given in seconds (default: 0)
-#   ERRLOG: define the runtime error logging behaviour;
-#           if set to 'last' (default), only store the most recent error;
-#           if set to 'all', store all errors
-#   ERRLOGFILE: if defined, write the error log to the file with name ERRLOGFILE
-#DURATION = 10
-#START = 3745
+#START=1400
+#DURATION=10
+
 #ERRLOG = last
 #ERRLOGFILE = ${PREFIX}.errlog
 
-
 # include main makefile
 include /path/to/Makefile.mk
-
 
 # sample of post include rule: speed up parts of a video
 # takes NAME_VIDEO_OUT_OVERLAY, applies a complex speed change filter, and

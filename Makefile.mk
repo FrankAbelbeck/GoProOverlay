@@ -16,11 +16,15 @@
 
 #-------------------------------------------------------------------------------
 # This makefile assumes that it was included after the following variables
-# were defined: PREFIX, PATTERN, OVERLAY, OFFSET, TEMPO, VOLCOCKPIT, VOLINTERCOM
+# were defined:
+# * `NAME_VIDEO_OUT_OVERLAY` Name of the final overlay-added video file.
+# * `NAME_AUDIO_MIX` Name of the mixed audio stream file.
+# * `NAME_VIDEO_OUT` Name of the raw (concatenated) video file.
+# * `PATTERN_VIDEO_IN` Pattern of all input files (i.e. file from the GoPro, e.g. GX*.MP4)
+# * `OVERLAY` Name of the overlay JSON configuration file.
 #
 # In order to use it, create your own Makefile (preferably in the directory of
-# your video files), and define these variables. As minimum requirement,
-# PREFIX, PATTERN, and OVERLAY have to be defined.
+# your video files), and define these variables.
 #
 # Right after these definitions, state the following line:
 #
@@ -40,7 +44,6 @@ CONVERT_TELE        = $(PATH_GOPRO)/convertTelemetry.py
 GET_GPS             = $(PATH_GOPRO)/getGPS.py
 GEN_FILTER_AUDIOMIX = $(PATH_GOPRO)/genFilterComplexAudioMix.py
 GEN_FILTER_SPEED    = $(PATH_GOPRO)/genFilterComplexSpeedChange.py
-CONCAT_TELE         = $(PATH_GOPRO)/concatTelemetry.py
 
 #
 # custom function: copy tags from FIRSTINPUT to filename given as first argument
@@ -85,7 +88,6 @@ MISSING += $(call funCheckInternal,$(shell $(CONVERT_TELE) --version >/dev/null 
 MISSING += $(call funCheckInternal,$(shell $(GET_GPS) --version >/dev/null 2>&1 || echo "1",getGPS.py))
 MISSING += $(call funCheckInternal,$(shell $(GEN_FILTER_AUDIOMIX) --version >/dev/null 2>&1 || echo "1",generateFilterExpression.py))
 MISSING += $(call funCheckInternal,$(shell $(GEN_FILTER_SPEED) --version >/dev/null 2>&1 || echo "1",generateFilterExpression.py))
-MISSING += $(call funCheckInternal,$(shell $(CONCAT_TELE) --version >/dev/null 2>&1 || echo "1",concatTelemetry.py))
 
 ifneq ($(strip $(MISSING)),)
 $(error program not properly set up)
@@ -101,6 +103,8 @@ endif
 
 PATTERN_IN_IMPLICIT = $(subst *,%,$(PATTERN_VIDEO_IN))
 FILES_RECODED = $(foreach FILE,$(wildcard $(PATTERN_VIDEO_IN)),$(FILE).mp4)
+
+DO_180_PARAMS = hflip,vflip,format=yuv420p
 
 .PHONY: audio video overlay
 
@@ -118,6 +122,7 @@ $(PATTERN_IN_IMPLICIT).mp4: $(PATTERN_IN_IMPLICIT)
 		-map_metadata 0 \
 		-map 0:v -map 0:a -map 0:$(GPMD_STREAM_IDX) \
 		-c:v libx264 $(X264_PARAMS) \
+		$(if $(ROTATE_180), -vf "$(DO_180_PARAMS)" -metadata:s:v rotate=0 ) \
 		-c:a copy \
 		-c:d copy -copy_unknown \
 		"$@"
@@ -147,24 +152,36 @@ $(NAME_VIDEO_OUT): $(FILES_RECODED) $(NAME_VIDEO_OUT).files
 	$(call copyTags,$<,$(NAME_VIDEO_OUT))
 
 #
+# rule: extract telemetry of concatenated output video
+#
+$(NAME_VIDEO_OUT).original.json: $(NAME_VIDEO_OUT)
+	@echo "extracting telemetry data of $^ to $@"
+	@$(EXIFTOOL) -n -b -u -ee -g3 -json -api largefilesupport=1 "$(NAME_VIDEO_OUT)" > "$@"
+
+#
 # rule: extract and convert telemetry of concatenated output video
 #
-$(NAME_VIDEO_OUT).json: $(NAME_VIDEO_OUT)
-	@echo "converting telemetry data of $^"
-	@$(EXIFTOOL) -n -b -ee -G3 -json -api largefilesupport=1 "$(NAME_VIDEO_OUT)" | \
-	$(CONVERT_TELE) \
-		$(if $(TELE_SAMPLES),--samples "$(TELE_SAMPLES)") \
-		$(if $(TELE_INITIAL_ROW),--init "$(TELE_INITIAL_ROW)") \
+$(NAME_VIDEO_OUT).json: $(NAME_VIDEO_OUT).original.json
+	@echo "converting telemetry data $^ to $@"
+	@cat $^ | $(CONVERT_TELE) \
 		$(if $(TELE_HDOP),--hdop $(TELE_HDOP) ) \
 		$(if $(TELE_MIN_SPEED),--minspeed $(TELE_MIN_SPEED) ) \
-		"$(NAME_VIDEO_OUT).json"
+		$(if $(TELE_GRAV),--grav $(TELE_GRAV) ) \
+		$(if $(TELE_QUAT),--quat $(TELE_QUAT) ) \
+		$(if $(TELE_EULER),--euler $(TELE_EULER) ) \
+		$(if $(TELE_ORI_OUT),--oriOut $(TELE_ORI_OUT) ) \
+		$(if $(TELE_CAL_GRAV),--calGrav $(TELE_CAL_GRAV) ) \
+		$(if $(TELE_NO_TC_MATCH),--noTCmatch ) \
+		$(if $(TELE_NO_RPY_ZERO),--noRPYZero ) \
+		$(foreach STR_OFFSET,$(TELE_OFFSETS),--offset $(STR_OFFSET) ) \
+		"$@"
 
 #
 # rule: create GPX file from concatenated JSON telemetry data
 #
 $(NAME_VIDEO_OUT).gpx: $(NAME_VIDEO_OUT).json
 	@echo "creating GPX file $@"
-	@$(GET_GPS) $(NAME_VIDEO_OUT).json | $(GPSBABEL) -t -i unicsv -f - -o gpx -F $(NAME_VIDEO_OUT).gpx
+	@$(GET_GPS) $(NAME_VIDEO_OUT).json | $(GPSBABEL) -t -i unicsv -f - -o gpx -F "$@"
 
 #
 # rule: create video overlayed with telemetry data
@@ -172,7 +189,6 @@ $(NAME_VIDEO_OUT).gpx: $(NAME_VIDEO_OUT).json
 $(NAME_VIDEO_OUT_OVERLAY): $(NAME_VIDEO_OUT) $(NAME_VIDEO_OUT).json $(NAME_AUDIO_MIX) $(OVERLAY)
 	@echo "creating overlay video"
 	@$(ADD_OVERLAY) --vcodec libx264 --acodec copy --params "$(X264_PARAMS)" \
-		$(foreach STR_OFFSET,$(OFFSETS),--offset $(STR_OFFSET) ) \
 		$(if $(TQS),--tqs $(TQS) ) \
 		$(if $(TQS),--tprint $(TPRINT) ) \
 		$(if $(START),--start $(START) ) \
